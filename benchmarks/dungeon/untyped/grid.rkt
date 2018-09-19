@@ -1,4 +1,5 @@
 #lang racket
+(define (TODO) (error "Not implemented yet."))
 
 (provide
   left
@@ -17,18 +18,30 @@
   "../base/un-types.rkt"
   require-typed-check
   ;math/array ;; TODO it'd be nice to use this
+ racket/contract
 )
 (require (only-in "cell.rkt"
   char->cell%
   void-cell%
+  cell%?
 ))
 
 ;; =============================================================================
 
-(define (array-set! g p v)
+(define array-coord? (vector/c index? index?))
+(define (arrayof val-ctc)
+  (vectorof (vectorof val-ctc)))
+
+;; TODO refine
+(define/contract (array-set! g p v)
+  (parametric->/c [A]
+                  ((arrayof A) array-coord? A . -> . void?))
   (vector-set! (vector-ref g (vector-ref p 0)) (vector-ref p 1) v))
 
-(define (build-array p f)
+(define/contract (build-array p f)
+  (parametric->/c [A]
+                  (array-coord? (array-coord? . -> . A) . -> . (arrayof A)))
+
   (for/vector
     ([x (in-range (vector-ref p 0))])
    (for/vector
@@ -38,10 +51,13 @@
 
 ;; a Grid is a math/array Mutable-Array of cell%
 ;; (mutability is required for dungeon generation)
+(define grid? (arrayof cell%?))
 
 ;; parses a list of strings into a grid, based on the printed representation
 ;; of each cell
-(define (parse-grid los)
+(define/contract (parse-grid los)
+  ((listof string?) . -> . grid?)
+
   (for/vector
               ; #:shape (vector (length los)
               ;                (apply max (map string-length los)))
@@ -51,7 +67,8 @@
                ([c (in-string s)])
      (new (char->cell% c)))))
 
-(define (show-grid g)
+(define/contract (show-grid g)
+  (grid? . -> . string?)
   (with-output-to-string
     (lambda ()
       (for ([r (in-vector g)])
@@ -59,33 +76,68 @@
           (display (send c show)))
         (newline)))))
 
-(define (grid-height g)
+(define/contract (grid-height g)
+  (grid? . -> . index?)
+
   (vector-length g))
 
-(define (grid-width g)
+(define/contract (grid-width g)
+  (grid? . -> . index?)
+
   (vector-length (vector-ref g 0)))
 
-(define (within-grid? g pos)
+(define/contract (within-grid? g pos)
+  (grid? array-coord? . -> . boolean?)
+
   (and (<= 0 (vector-ref pos 0) (sub1 (grid-height g)))
        (<= 0 (vector-ref pos 1) (sub1 (grid-width  g)))))
 
-(define (grid-ref g pos)
+(define ((within-grid/c g) pos)
+  (within-grid? g pos))
+
+(define (or-#f/c ctc)
+  (or/c ctc
+        #f))
+
+(define/contract (grid-ref g pos)
+  ;; TODO should this more precise version be used?
+  ;; Concerned that somewhere result is checked for #f and usefully responds
+  (->i ([g grid?]
+        [pos (g) (and/c array-coord?
+                        (within-grid/c g))])
+       [result cell%?])
+  ;; Simpler version:
+  ;; (grid? array-coord? . -> . (or-#f/c cell%?))
+
+
   (and (within-grid? g pos)
        (vector-ref (vector-ref g (vector-ref pos 0)) (vector-ref pos 1))))
 
-(define (left pos [n 1])
+(define/contract (left pos [n 1])
+  (->* (array-coord?) [index?]
+       array-coord?)
+
   (vector (vector-ref pos 0)
           (max (- (vector-ref pos 1) n) 0)))
 
-(define (right pos [n 1])
+(define/contract (right pos [n 1])
+  (->* (array-coord?) [index?]
+       array-coord?)
+
   (vector (vector-ref pos 0)
           (max (+ (vector-ref pos 1) n) 0)))
 
-(define (up pos [n 1])
+(define/contract (up pos [n 1])
+  (->* (array-coord?) [index?]
+       array-coord?)
+
   (vector (max (- (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
 
-(define (down pos [n 1])
+(define/contract (down pos [n 1])
+  (->* (array-coord?) [index?]
+       array-coord?)
+
   (vector (max (+ (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
 
