@@ -12,6 +12,9 @@
   show-grid
   array-set!
   build-array
+  array-coord?
+  direction?
+  or-#f/c
 )
 
 (require
@@ -113,30 +116,29 @@
   (and (within-grid? g pos)
        (vector-ref (vector-ref g (vector-ref pos 0)) (vector-ref pos 1))))
 
+(define direction? (->* (array-coord?) [index?]
+                        array-coord?))
+
 (define/contract (left pos [n 1])
-  (->* (array-coord?) [index?]
-       array-coord?)
+  direction?
 
   (vector (vector-ref pos 0)
           (max (- (vector-ref pos 1) n) 0)))
 
 (define/contract (right pos [n 1])
-  (->* (array-coord?) [index?]
-       array-coord?)
+  direction?
 
   (vector (vector-ref pos 0)
           (max (+ (vector-ref pos 1) n) 0)))
 
 (define/contract (up pos [n 1])
-  (->* (array-coord?) [index?]
-       array-coord?)
+  direction?
 
   (vector (max (- (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
 
 (define/contract (down pos [n 1])
-  (->* (array-coord?) [index?]
-       array-coord?)
+  direction?
 
   (vector (max (+ (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
