@@ -1,5 +1,7 @@
 #lang racket/base
 
+(require racket/contract)
+
 (provide
   enqueue-message!
   reset-message-queue!
@@ -18,6 +20,6 @@
   (set! message-queue (cons m message-queue)))
 
 (define/contract (reset-message-queue!)
-  (string? . -> . void?)
+  (-> void?)
 
   (set! message-queue '()))
