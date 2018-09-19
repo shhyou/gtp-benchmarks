@@ -1,5 +1,4 @@
 #lang racket/base
-(define (TODO) (error "Not implemented yet."))
 ;; TODO use open?
 
 (provide

@@ -1,5 +1,4 @@
 #lang racket
-(define (TODO) (error "Not implemented yet."))
 
 (provide
   left
