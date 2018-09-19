@@ -1,5 +1,5 @@
 #lang racket/base
-
+(define (TODO) (error "Not implemented yet."))
 ;; TODO use open?
 
 (provide
@@ -11,6 +11,7 @@
   char->cell%
   wall%
   void-cell%
+  cell%?
 )
 
 ;; -----------------------------------------------------------------------------
@@ -18,6 +19,7 @@
 (require
  racket/class
  "../base/un-types.rkt"
+ racket/contract
 )
 (require (only-in "message-queue.rkt"
   enqueue-message!
@@ -28,18 +30,14 @@
 ))
 ;; =============================================================================
 
-;; maps printed representations to cell classes
-;; for map parsing
-(define chars->cell%s
-  (make-hash))
-
-(define (register-cell-type! c% char)
-  (dict-set! chars->cell%s char c%))
-
-(define (char->cell% char)
-  (dict-ref chars->cell%s char))
-
-(define cell% ; some kind of obstacle by default
+(define cell%/c (class/c (field [items list?]
+                                [occupant any/c]) ;; TODO specify
+                         [free? (->m boolean?)]
+                         [show (->m char?)]
+                         [open (->m void?)]
+                         [close (->m void?)]))
+(define/contract cell% ; some kind of obstacle by default
+  cell%/c
   (class object%
     (init-field [items    '()]
                 [occupant #f]) ; player, monster, etc.
@@ -52,9 +50,29 @@
     (define/public (close)
       (enqueue-message! "Can't close that."))
     (super-new)))
+
+(define cell%? (instanceof/c cell%/c))
+
+;; maps printed representations to cell classes
+;; for map parsing
+(define/contract chars->cell%s
+  (hash/c char? cell%/c)
+  (make-hash))
+
+(define/contract (register-cell-type! c% char)
+  (cell%/c char? . -> . void?)
+
+  (dict-set! chars->cell%s char c%))
+
+(define/contract (char->cell% char)
+  (char? . -> . cell%/c)
+
+  (dict-ref chars->cell%s char))
+
 (register-cell-type! cell% #\*)
 
-(define empty-cell%
+(define/contract empty-cell%
+  cell%/c
   (class cell%
     (inherit-field occupant)
     (define/override (free?)
@@ -66,13 +84,15 @@
     (super-new)))
 (register-cell-type! empty-cell% #\space)
 
-(define void-cell%
+(define/contract void-cell%
+  cell%/c
   (class cell%
     (define/override (show) #\.) ; for testing only
     (super-new)))
 (register-cell-type! void-cell% #\.)
 
-(define wall%
+(define/contract wall%
+  cell%/c
   (class cell%
     (define/override (show) #\X) ; for testing only
     (super-new)))
@@ -80,7 +100,8 @@
 
 (define double-bar? #t)
 (define-syntax-rule (define-wall name single-bar double-bar)
-  (begin (define name
+  (begin (define/contract name
+           cell%/c
            (class wall%
              (define/override (show) (if double-bar? double-bar single-bar))
              (super-new)))
@@ -101,7 +122,8 @@
 (define-wall east-tee-wall%    #\u2524 #\u2563)
 (define-wall west-tee-wall%    #\u251c #\u2560)
 
-(define door%
+(define/contract door%
+  cell%/c
   (class cell%
     ;(init-field [open? #f])
     (inherit-field occupant)
@@ -117,7 +139,8 @@
           (enqueue-message! "The door is already closed.")))
     (super-new)))
 
-(define vertical-door%
+(define/contract vertical-door%
+  cell%/c
   (class door%
     (inherit-field #;open? occupant)
     (define/override (show)
@@ -128,7 +151,8 @@
 (register-cell-type! vertical-door% #\|)
 (register-cell-type! (class vertical-door% (super-new #;[open? #t])) #\_)
 
-(define horizontal-door%
+(define/contract horizontal-door%
+  cell%/c
   (class door%
     (inherit-field #;open? occupant)
     (define/override (show)
