@@ -7,6 +7,7 @@
   racket/class
   "../base/un-types.rkt"
   racket/match
+  racket/contract
 )
 (require (only-in racket/set
   set-intersect
@@ -33,6 +34,7 @@
   east-tee-wall%
   south-tee-wall%
   empty-cell%
+  cell%?
 ))
 (require (only-in "grid.rkt"
   left
@@ -45,6 +47,13 @@
   show-grid
   array-set!
   build-array
+  array-coord?
+  arrayof
+  grid?
+  within-grid/c
+  array-coord?
+  direction?
+  or-#f/c
 ))
 (require (only-in "utils.rkt"
   random-between
@@ -68,13 +77,40 @@
    free-cells   ; where monsters or treasure could go
    extension-points)) ; where a corridor could sprout
 
+(define (alistof key/c val/c)
+  (listof (cons/c key/c val/c)))
+
+(define (room-with/c height/c
+                     width/c
+                     poss->cells/c
+                     free-cells/c
+                     extension-points/c)
+  (struct/c room
+            (and/c index? 
+                   height/c)
+            (and/c index?
+                   width/c)
+            (and/c (alistof array-coord? cell%?)
+                   poss->cells/c)
+            (and/c (listof array-coord?)
+                   free-cells/c)
+            (and/c (listof array-coord?)
+                   extension-points/c)))
+(define any-room? (room-with/c any/c any/c any/c any/c any/c))
+
+
 ;; -----------------------------------------------------------------------------
 
 (define N 1)
 
-(define wall-cache (make-hash))
+(define/contract wall-cache
+  (hash/c ??? cell%?)
+  (make-hash))
 
-(define free-cache (make-hash))
+(define/contract free-cache 
+  (hash/c ??? cell%?)
+  (make-hash))
+
 (define animate-generation? #f) ; to see intermediate steps
 (define ITERS 10)
 (define dungeon-height 18) ; to be easy to display in 80x24, with other stuff
@@ -82,7 +118,38 @@
 
 ;; -----------------------------------------------------------------------------
 
-(define (try-add-rectangle grid pos height width direction)
+(define ((coord-within-box/c start-pos height width) cell-coord)
+  (match-define (vector start-x start-y) start-pos)
+  (match-define (vector cell-x cell-y) cell-coord)
+  (define x-min (- start-x width))
+  (define x-max (+ start-x width))
+  (define y-min (- start-y height))
+  (define y-max (+ start-y height))
+  (and (>= cell-x x-min)
+       (<= cell-x x-max)
+       (>= cell-y y-min)
+       (<= cell-y y-max)))
+(define/contract (try-add-rectangle grid pos height width direction)
+  (->i ([grid grid?]
+        [pos array-coord?]
+        [height index?]
+        [width index?]
+        [direction direction?])
+       [result (grid pos height width direction)
+               ;; TODO specify further
+               (or-#f/c any-room?)
+               (or-#f/c (room-with/c (=/c height)
+                                     (=/c width)
+                                     (alistof (and/c array-coord?
+                                                     (coord-within-box/c
+                                                      pos 
+                                                      height
+                                                      width))
+                                              cell%?)
+                                     ;; TODO can these be refined?
+                                     any/c
+                                     any/c))])
+
   ;; height and width include a wall of one cell wide on each side
   (match-define (vector x y) pos)
   (define min-x (match direction
@@ -140,7 +207,9 @@
        (room height width poss->cells free-cells extension-points)))
 
 ;; mutate `grid` to add `room`
-(define (commit-room grid room)
+(define/contract (commit-room grid room)
+  (grid? any-room? . -> . void?)
+
   (for ([pos+cell% (in-list (room-poss->cells room))])
     (match-define (cons pos cell%) pos+cell%)
     (array-set! grid pos (new cell%))))
@@ -187,18 +256,31 @@
 ;  )
 
 
-(define (random-direction) (random-from (list left right up down)))
+(define/contract (random-direction)
+  (-> (or/c left right up down))
 
-(define (horizontal? dir)  (or (eq? dir right)  (eq? dir left)))
+  (random-from (list left right up down)))
 
-(define (vertical? dir)    (or (eq? dir up) (eq? dir down)))
+(define/contract (horizontal? dir)
+  (direction? . -> . boolean?)
 
-(define (new-room grid pos dir)
+  (or (eq? dir right)  (eq? dir left)))
+
+(define/contract (vertical? dir)
+  (direction? . -> . boolean?)
+
+  (or (eq? dir up) (eq? dir down)))
+
+(define/contract (new-room grid pos dir)
+  (grid? array-coord? direction? . -> . grid?)
+
   (define w (assert (random-between 7 11) index?)) ; higher than that is hard to fit
   (define h (assert (random-between 7 11) index?))
   (try-add-rectangle grid pos w h dir))
 
-(define (new-corridor grid pos dir)
+(define/contract (new-corridor grid pos dir)
+  (grid? array-coord? direction? . -> . grid?)
+
   (define h? (horizontal? dir))
   (define len
     ;; given map proportions (terminal window), horizontal corridors are
@@ -211,7 +293,9 @@
   (define w (if h? len 3))
   (try-add-rectangle grid pos h w dir))
 
-(define (generate-dungeon encounters)
+(define/contract (generate-dungeon encounters)
+  ((listof encounter?) . -> . grid?)
+
   ;; a room for each encounter, and a few empty ones
   (define n-rooms (max (length encounters) (random-between 6 9)))
   (define grid
@@ -333,7 +417,9 @@
            grid])))
 
 
-(define (counts-as-free? grid pos) ; i.e., player could be there
+(define/contract (counts-as-free? grid pos) ; i.e., player could be there
+  (grid? array-coord? . -> . boolean?)
+
   (cond [(hash-ref free-cache pos #f) => (lambda (x) x)]
         [else
          (define c   (grid-ref grid pos))
@@ -345,7 +431,9 @@
   (void))
 
 ;; wall smoothing, for aesthetic reasons
-(define (smooth-walls grid)
+(define/contract (smooth-walls grid)
+  (grid? . -> . grid?)
+
   (for* ([x (in-range (grid-height grid))]
          [y (in-range (grid-width  grid))])
     (smooth-single-wall grid (vector (assert x index?) (assert y index?))))
@@ -354,7 +442,9 @@
   grid)
 
 
-(define (smooth-single-wall grid pos)
+(define/contract (smooth-single-wall grid pos)
+  (grid? array-coord? . -> . void?)
+
   (define (wall-or-door? pos)
     (cond [(hash-ref wall-cache pos #f) => (lambda (x) x)]
           [else
