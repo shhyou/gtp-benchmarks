@@ -11,6 +11,8 @@
   wall%
   void-cell%
   cell%?
+  cell%/c
+  class-equal?
 )
 
 ;; -----------------------------------------------------------------------------
@@ -20,17 +22,20 @@
  "../base/un-types.rkt"
  racket/contract
 )
+(require (only-in racket/function
+                  curry))
 (require (only-in "message-queue.rkt"
   enqueue-message!
 ))
 (require (only-in racket/dict
   dict-ref
   dict-set!
+  dict-has-key?
 ))
 ;; =============================================================================
 
 (define cell%/c (class/c (field [items list?]
-                                [occupant any/c]) ;; TODO specify
+                                [occupant any/c]) ;; llTODO specify
                          [free? (->m boolean?)]
                          [show (->m char?)]
                          [open (->m void?)]
@@ -58,13 +63,26 @@
   (hash/c char? cell%/c)
   (make-hash))
 
+;; Workaround for bug(?) in class comparison:
+;; (subclass? cell% (dict-ref chars->cell%s #\*)) => #f
+(define (class-equal? a% b%)
+  (and (subclass? a% b%)
+       (subclass? b% a%)))
+
 (define/contract (register-cell-type! c% char)
-  (cell%/c char? . -> . void?)
+  (->i ([c% cell%/c] 
+        [char char?])
+       [result void?]
+       #:post (c% char) (class-equal? (dict-ref chars->cell%s char (λ x (void)))
+                                c%))
 
   (dict-set! chars->cell%s char c%))
 
 (define/contract (char->cell% char)
-  (char? . -> . cell%/c)
+  (->i ([char (and/c char? (curry dict-has-key? chars->cell%s))])
+       [result (char)
+               (and/c cell%/c
+                      (curry class-equal? (dict-ref chars->cell%s char)))])
 
   (dict-ref chars->cell%s char))
 
