@@ -14,6 +14,10 @@
   array-coord?
   direction?
   or-#f/c
+  arrayof
+  grid?
+  within-grid?
+  within-grid/c
 )
 
 (require
@@ -26,6 +30,7 @@
   char->cell%
   void-cell%
   cell%?
+  class-equal?
 ))
 
 ;; =============================================================================
@@ -34,21 +39,37 @@
 (define (arrayof val-ctc)
   (vectorof (vectorof val-ctc)))
 
-;; TODO refine
+;; llTODO refine
 (define/contract (array-set! g p v)
-  (parametric->/c [A]
-                  ((arrayof A) array-coord? A . -> . void?))
+  (let ([A (new-∀/c 'A)])
+    (->i ([g (arrayof A)]
+          [p array-coord?]
+          [v A])
+         [result void?]
+         #:post (g p v) (equal? v (grid-ref g p))))
+
   (vector-set! (vector-ref g (vector-ref p 0)) (vector-ref p 1) v))
 
 (define/contract (build-array p f)
-  (parametric->/c [A]
-                  (array-coord? (array-coord? . -> . A) . -> . (arrayof A)))
+  (let ([A (new-∀/c 'A)])
+    (->i ([p array-coord?]
+          [f (array-coord? . -> . A)])
+         [result (arrayof A)]
+         #:post (p f result)
+         (begin (displayln result)
+                (for/fold ([good-so-far? #t])
+                          ([x (in-range (vector-ref p 0))])
+                  (and good-so-far?
+                       (for/fold ([good-so-far? good-so-far?])
+                                 ([y (in-range (vector-ref p 1))])
+                         (define xy (vector x y))
+                         (and good-so-far?
+                              (equal? (f xy)
+                                      (grid-ref result xy)))))))))
 
-  (for/vector
-    ([x (in-range (vector-ref p 0))])
-   (for/vector
-                ([y (in-range (vector-ref p 1))])
-    (f (vector (assert x index?) (assert y index?))))))
+  (for/vector ([x (in-range (vector-ref p 0))])
+    (for/vector ([y (in-range (vector-ref p 1))])
+      (f (vector (assert x index?) (assert y index?))))))
   ;(build-array p f)))
 
 ;; a Grid is a math/array Mutable-Array of cell%
@@ -102,15 +123,21 @@
         #f))
 
 (define/contract (grid-ref g pos)
-  ;; TODO should this more precise version be used?
-  ;; Concerned that somewhere result is checked for #f and usefully responds
+  ;; llTODO present:
+  ;; This version checking compatibility of g and pos is a better specification
+  ;; However the code relies on referencing invalid positions and
+  ;; checking for #f
+  ;; I changed the one section I found that does so:
+  ;; main.rkt:190 (try-add-rectangle)
   (->i ([g grid?]
         [pos (g) (and/c array-coord?
                         (within-grid/c g))])
-       [result cell%?])
-  ;; Simpler version:
-  ;; (grid? array-coord? . -> . (or-#f/c cell%?))
-
+       [result (g pos)
+               (or-#f/c
+                (and/c cell%?
+                       (curry equal?
+                              (vector-ref (vector-ref g (vector-ref pos 0))
+                                          (vector-ref pos 1)))))])
 
   (and (within-grid? g pos)
        (vector-ref (vector-ref g (vector-ref pos 0)) (vector-ref pos 1))))
@@ -118,6 +145,8 @@
 (define direction? (->* (array-coord?) [index?]
                         array-coord?))
 
+;; llTODO refine
+;; specify end result is exactly n away from pos
 (define/contract (left pos [n 1])
   direction?
 
