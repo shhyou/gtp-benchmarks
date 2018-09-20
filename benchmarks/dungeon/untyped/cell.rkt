@@ -13,6 +13,7 @@
   cell%?
   cell%/c
   class-equal?
+  cell%
 )
 
 ;; -----------------------------------------------------------------------------
@@ -43,6 +44,7 @@
 (define/contract cell% ; some kind of obstacle by default
   cell%/c
   (class object%
+    (inspect #f)
     (init-field [items    '()]
                 [occupant #f]) ; player, monster, etc.
     (define/public (free?)
@@ -70,7 +72,7 @@
        (subclass? b% a%)))
 
 (define/contract (register-cell-type! c% char)
-  (->i ([c% cell%/c] 
+  (->i ([c% cell%/c]
         [char char?])
        [result void?]
        #:post (c% char) (class-equal? (dict-ref chars->cell%s char (λ x (void)))
@@ -91,6 +93,7 @@
 (define/contract empty-cell%
   cell%/c
   (class cell%
+    (inspect #f)
     (inherit-field occupant)
     (define/override (free?)
       (not occupant))
@@ -104,6 +107,7 @@
 (define/contract void-cell%
   cell%/c
   (class cell%
+    (inspect #f)
     (define/override (show) #\.) ; for testing only
     (super-new)))
 (register-cell-type! void-cell% #\.)
@@ -111,6 +115,7 @@
 (define/contract wall%
   cell%/c
   (class cell%
+    (inspect #f)
     (define/override (show) #\X) ; for testing only
     (super-new)))
 (register-cell-type! wall% #\X)
@@ -120,6 +125,7 @@
   (begin (define/contract name
            cell%/c
            (class wall%
+             (inspect #f)
              (define/override (show) (if double-bar? double-bar single-bar))
              (super-new)))
          ;; parse either kind
@@ -142,6 +148,7 @@
 (define/contract door%
   cell%/c
   (class cell%
+    (inspect #f)
     ;(init-field [open? #f])
     (inherit-field occupant)
     (define/override (free?)
@@ -159,6 +166,7 @@
 (define/contract vertical-door%
   cell%/c
   (class door%
+    (inspect #f)
     (inherit-field #;open? occupant)
     (define/override (show)
       (if #t ;open?
@@ -166,11 +174,15 @@
           #\|))
     (super-new)))
 (register-cell-type! vertical-door% #\|)
-(register-cell-type! (class vertical-door% (super-new #;[open? #t])) #\_)
+(register-cell-type! (class vertical-door%
+                       (inspect #f)
+                       (super-new #;[open? #t]))
+                     #\_)
 
 (define/contract horizontal-door%
   cell%/c
   (class door%
+    (inspect #f)
     (inherit-field #;open? occupant)
     (define/override (show)
       (if #t ;open?
@@ -178,6 +190,9 @@
           #\-))
     (super-new)))
 (register-cell-type! horizontal-door% #\-)
-(register-cell-type! (class horizontal-door% (super-new #;[open? #t])) #\')
+(register-cell-type! (class horizontal-door%
+                       (inspect #f)
+                       (super-new #;[open? #t]))
+                     #\')
 
 ;; TODO chests, entry/exit
