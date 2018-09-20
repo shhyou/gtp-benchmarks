@@ -146,11 +146,10 @@
         [pos (g) (and/c array-coord?
                         (within-grid/c g))])
        [result (g pos)
-               (or-#f/c
-                (and/c cell%?
-                       (curry equal?
-                              (vector-ref (vector-ref g (vector-ref pos 0))
-                                          (vector-ref pos 1)))))])
+               (and/c cell%?
+                      (curry equal?
+                             (vector-ref (vector-ref g (vector-ref pos 0))
+                                         (vector-ref pos 1))))])
 
   (and (within-grid? g pos)
        (vector-ref (vector-ref g (vector-ref pos 0)) (vector-ref pos 1))))
