@@ -35,6 +35,8 @@
   south-tee-wall%
   empty-cell%
   cell%?
+  cell%/c
+  cell%
 ))
 (require (only-in "grid.rkt"
   left
@@ -50,8 +52,8 @@
   array-coord?
   arrayof
   grid?
+  within-grid?
   within-grid/c
-  array-coord?
   direction?
   or-#f/c
 ))
@@ -60,6 +62,7 @@
   random-from
   random
   reset!
+  random-result-between/c
 ))
 
 ;; =============================================================================
@@ -69,6 +72,9 @@
 ;(define-type ExtPoints (Listof (Pairof Pos Room)))
 ;; dungeon generation
 
+(define (alistof key/c val/c)
+  (listof (cons/c key/c val/c)))
+
 (struct room
   (height
    width
@@ -76,9 +82,6 @@
    ;;            (so that we can construct the room later when we commit to it)
    free-cells   ; where monsters or treasure could go
    extension-points)) ; where a corridor could sprout
-
-(define (alistof key/c val/c)
-  (listof (cons/c key/c val/c)))
 
 (define (room-with/c height/c
                      width/c
@@ -90,8 +93,13 @@
                    height/c)
             (and/c index?
                    width/c)
-            (and/c (alistof array-coord? cell%?)
+
+            ;; llTODO present: Can't specify cell%/c?
+            ;; (and/c (alistof array-coord? cell%/c)
+                   ;; poss->cells/c)
+            (and/c (alistof array-coord? any/c)
                    poss->cells/c)
+
             (and/c (listof array-coord?)
                    free-cells/c)
             (and/c (listof array-coord?)
@@ -104,11 +112,11 @@
 (define N 1)
 
 (define/contract wall-cache
-  (hash/c ??? cell%?)
+  (hash/c array-coord? boolean?)
   (make-hash))
 
 (define/contract free-cache 
-  (hash/c ??? cell%?)
+  (hash/c array-coord? boolean?)
   (make-hash))
 
 (define animate-generation? #f) ; to see intermediate steps
@@ -129,26 +137,28 @@
        (<= cell-x x-max)
        (>= cell-y y-min)
        (<= cell-y y-max)))
+
 (define/contract (try-add-rectangle grid pos height width direction)
   (->i ([grid grid?]
         [pos array-coord?]
         [height index?]
         [width index?]
         [direction direction?])
-       [result (grid pos height width direction)
-               ;; TODO specify further
-               (or-#f/c any-room?)
-               (or-#f/c (room-with/c (=/c height)
-                                     (=/c width)
-                                     (alistof (and/c array-coord?
-                                                     (coord-within-box/c
-                                                      pos 
-                                                      height
-                                                      width))
-                                              cell%?)
-                                     ;; TODO can these be refined?
-                                     any/c
-                                     any/c))])
+       [result (pos height width)
+               (or-#f/c 
+                (room-with/c
+                 (=/c height)
+                 (=/c width)
+                 (alistof (and/c array-coord?
+                                 (coord-within-box/c pos 
+                                                     width
+                                                     height))
+                          ;; llTODO present:
+                          ;; can't specify cell%? ?
+                          any/c #;cell%?)
+                 ;; llTODO can these be refined?
+                 any/c
+                 any/c))])
 
   ;; height and width include a wall of one cell wide on each side
   (match-define (vector x y) pos)
@@ -180,7 +190,12 @@
        [(not success?)
         (values success? poss->cells free-cells extension-points)]
        [success?
-        (define c (and (index? x) (index? y) (grid-ref grid (vector x y))))
+        ;; (define c (and (index? x) (index? y) (grid-ref grid (vector x y))))
+
+        (define xy-pt (vector x y))
+        (define c (and (index? x) (index? y) (within-grid? grid xy-pt)
+                       (grid-ref grid xy-pt)))
+
         (cond [(and c ; not out of bounds
                     (or (is-a? c void-cell%) ; unused yet
                         (is-a? c wall%)))    ; neighboring room, can abut
@@ -208,7 +223,16 @@
 
 ;; mutate `grid` to add `room`
 (define/contract (commit-room grid room)
-  (grid? any-room? . -> . void?)
+  (->i ([grid grid?]
+        [room any-room?])
+       [result void?]
+       #:post (grid room)
+       (for/fold ([good-so-far? #t])
+                 ([pos+cell% (in-list (room-poss->cells room))])
+         (match-define (cons pos poss-cell%) pos+cell%)
+         (and good-so-far?
+              (is-a? (grid-ref grid pos)
+                     poss-cell%))))
 
   (for ([pos+cell% (in-list (room-poss->cells room))])
     (match-define (cons pos cell%) pos+cell%)
@@ -257,29 +281,73 @@
 
 
 (define/contract (random-direction)
-  (-> (or/c left right up down))
+  (-> (curryr member (list left right up down)))
 
   (random-from (list left right up down)))
 
 (define/contract (horizontal? dir)
-  (direction? . -> . boolean?)
+  (->i ([dir direction?])
+       [result (dir) (if (member dir (list left right))
+                         #t
+                         #f)])
 
   (or (eq? dir right)  (eq? dir left)))
 
 (define/contract (vertical? dir)
-  (direction? . -> . boolean?)
+  (->i ([dir direction?])
+       [result (dir) (if (member dir (list up down))
+                         #t
+                         #f)])
 
   (or (eq? dir up) (eq? dir down)))
 
 (define/contract (new-room grid pos dir)
-  (grid? array-coord? direction? . -> . grid?)
+  (->i ([grid grid?] 
+        [pos array-coord?]
+        [dir direction?])
+       [result (pos)
+               (or-#f/c
+                (room-with/c
+                 (random-result-between/c 7 11)
+                 (random-result-between/c 7 11)
+                 (alistof (and/c array-coord?
+                                 ;; ll: Just make sure it's within the max
+                                 (coord-within-box/c pos
+                                                     11
+                                                     11))
+                          ;; llTODO present:
+                          ;; can't specify cell%? ?
+                          any/c)
+                 any/c
+                 any/c))])
 
-  (define w (assert (random-between 7 11) index?)) ; higher than that is hard to fit
+  ; higher than that (7 11) is hard to fit
+  (define w (assert (random-between 7 11) index?))
   (define h (assert (random-between 7 11) index?))
   (try-add-rectangle grid pos w h dir))
 
 (define/contract (new-corridor grid pos dir)
-  (grid? array-coord? direction? . -> . grid?)
+  (->i ([grid grid?] 
+        [pos array-coord?]
+        [dir direction?])
+       [result (pos dir)
+               (let* ([h? (horizontal? dir)]
+                      [h (if h? 3 8)]
+                      [w (if h? 10 3)])
+                 (or-#f/c
+                  (room-with/c
+                   (random-result-between/c 7 11)
+                   (random-result-between/c 7 11)
+                   (alistof (and/c array-coord?
+                                   ;; ll: Just make sure it's within the max
+                                   (coord-within-box/c pos
+                                                       h
+                                                       w))
+                            ;; llTODO present:
+                            ;; can't specify cell%? ?
+                            any/c)
+                   any/c
+                   any/c)))])
 
   (define h? (horizontal? dir))
   (define len
@@ -294,7 +362,7 @@
   (try-add-rectangle grid pos h w dir))
 
 (define/contract (generate-dungeon encounters)
-  ((listof encounter?) . -> . grid?)
+  ((listof exact-nonnegative-integer?) . -> . grid?)
 
   ;; a room for each encounter, and a few empty ones
   (define n-rooms (max (length encounters) (random-between 6 9)))
@@ -418,7 +486,13 @@
 
 
 (define/contract (counts-as-free? grid pos) ; i.e., player could be there
-  (grid? array-coord? . -> . boolean?)
+  (->i ([grid grid?]
+        [pos array-coord?])
+       [result boolean?]
+       #:post (grid pos result) (let ([c (grid-ref grid pos)])
+                                  (or (false? result)
+                                      (is-a? c empty-cell%)
+                                      (is-a? c door%))))
 
   (cond [(hash-ref free-cache pos #f) => (lambda (x) x)]
         [else
@@ -442,6 +516,8 @@
   grid)
 
 
+;; lltodo present: is it worth coming up with a specification of what
+;; it means to smooth a wall?
 (define/contract (smooth-single-wall grid pos)
   (grid? array-coord? . -> . void?)
 
@@ -530,7 +606,8 @@
     (show-grid (smooth-walls (generate-dungeon (range N))))
     (reset!)))
 
-(time (void (main)))
+(module+ main
+  (time (void (main))))
 ;; Change `void` to `display` to test. Should see:
 ;;............................................................
 ;;............................................................
