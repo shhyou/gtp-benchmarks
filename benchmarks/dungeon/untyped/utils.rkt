@@ -8,6 +8,7 @@
   random-from
   random
   reset!
+  random-result-between/c
 )
 
 (require
