@@ -126,17 +126,23 @@
 
 ;; -----------------------------------------------------------------------------
 
-(define ((coord-within-box/c start-pos height width) cell-coord)
+(define ((coord-within-box/c start-pos height width direction) cell-coord)
   (match-define (vector start-x start-y) start-pos)
   (match-define (vector cell-x cell-y) cell-coord)
-  (define x-min (- start-x width))
-  (define x-max (+ start-x width))
-  (define y-min (- start-y height))
-  (define y-max (+ start-y height))
-  (and (>= cell-x x-min)
-       (<= cell-x x-max)
-       (>= cell-y y-min)
-       (<= cell-y y-max)))
+  (define min-x (match direction
+                  [(== down) start-x]
+                  [(== up) (+ (- start-x height) 1)]
+                  [else    (sub1 (- start-x (- height 2)))]))
+  (define min-y (match direction
+                  [(== right) start-y]
+                  [(== left)  (+ (- start-y width) 1)]
+                  [else       (sub1 (- start-y (- width 2)))]))
+  (define max-x (+ min-x height))
+  (define max-y (+ min-y width))
+  (and (>= cell-x min-x)
+       (<= cell-x max-x)
+       (>= cell-y min-y)
+       (<= cell-y max-y)))
 
 (define/contract (try-add-rectangle grid pos height width direction)
   (->i ([grid grid?]
@@ -145,15 +151,16 @@
         [height index?]
         [width index?]
         [direction direction?])
-       [result (pos height width)
+       [result (pos height width direction)
                (or-#f/c 
                 (room-with/c
                  (=/c height)
                  (=/c width)
                  (alistof (and/c array-coord?
                                  (coord-within-box/c pos
+                                                     height
                                                      width
-                                                     height))
+                                                     direction))
                           ;; llTODO present:
                           ;; can't specify cell%? ?
                           any/c #;cell%?)
@@ -306,7 +313,7 @@
   (->i ([grid grid?] 
         [pos array-coord?]
         [dir direction?])
-       [result (pos)
+       [result (pos dir)
                (or-#f/c
                 (room-with/c
                  (random-result-between/c 7 11)
@@ -315,7 +322,8 @@
                                  ;; ll: Just make sure it's within the max
                                  (coord-within-box/c pos
                                                      11
-                                                     11))
+                                                     11
+                                                     dir))
                           ;; llTODO present:
                           ;; can't specify cell%? ?
                           any/c)
@@ -343,7 +351,8 @@
                                    ;; ll: Just make sure it's within the max
                                    (coord-within-box/c pos
                                                        h
-                                                       w))
+                                                       w
+                                                       dir))
                             ;; llTODO present:
                             ;; can't specify cell%? ?
                             any/c)
