@@ -140,7 +140,8 @@
 
 (define/contract (try-add-rectangle grid pos height width direction)
   (->i ([grid grid?]
-        [pos array-coord?]
+        [pos (grid) (and/c array-coord?
+                           (within-grid/c grid))]
         [height index?]
         [width index?]
         [direction direction?])
@@ -150,7 +151,7 @@
                  (=/c height)
                  (=/c width)
                  (alistof (and/c array-coord?
-                                 (coord-within-box/c pos 
+                                 (coord-within-box/c pos
                                                      width
                                                      height))
                           ;; llTODO present:
