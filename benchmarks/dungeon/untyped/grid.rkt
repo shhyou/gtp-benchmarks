@@ -41,31 +41,43 @@
 
 ;; llTODO refine
 (define/contract (array-set! g p v)
-  (let ([A (new-∀/c 'A)])
-    (->i ([g (arrayof A)]
-          [p array-coord?]
-          [v A])
-         [result void?]
-         #:post (g p v) (equal? v (grid-ref g p))))
+  ;; ll: I wanted this to be parametric, but the parametric contract
+  ;; makes the v in the array opaque, which is interfering with other
+  ;; contracts
+  (->i ([g (arrayof any/c)]
+        [p array-coord?]
+        [v any/c])
+       [result void?]
+       #:post (g p v) (equal? v (grid-ref g p)))
 
   (vector-set! (vector-ref g (vector-ref p 0)) (vector-ref p 1) v))
 
 (define/contract (build-array p f)
-  (let ([A (new-∀/c 'A)])
-    (->i ([p array-coord?]
-          [f (array-coord? . -> . A)])
-         [result (arrayof A)]
-         #:post (p f result)
-         (begin (displayln result)
-                (for/fold ([good-so-far? #t])
-                          ([x (in-range (vector-ref p 0))])
-                  (and good-so-far?
-                       (for/fold ([good-so-far? good-so-far?])
-                                 ([y (in-range (vector-ref p 1))])
-                         (define xy (vector x y))
-                         (and good-so-far?
-                              (equal? (f xy)
-                                      (grid-ref result xy)))))))))
+  ;; ll: Wanted this to be parametric, but post-condition needs to
+  ;; inspect result
+  (->i ([p array-coord?]
+        [f (array-coord? . -> . any/c)])
+       [result (arrayof any/c)]
+       #:post (p f result)
+       (let ([res
+              (for/fold ([good-so-far? #t])
+                        ([x (in-range (vector-ref p 0))])
+                (unless good-so-far?
+                  (displayln (list x)))
+                (and good-so-far?
+                     (for/fold ([good-so-far? good-so-far?])
+                               ([y (in-range (vector-ref p 1))])
+                       (unless good-so-far?
+                         (define last-xy (vector x (sub1 y)))
+                         (displayln (list 'failed:
+                                          last-xy
+                                          (f last-xy)
+                                          (grid-ref result last-xy))))
+                       (define xy (vector x y))
+                       (and good-so-far?
+                            (equal? (f xy)
+                                    (grid-ref result xy))))))])
+         (or res (begin (displayln result) res))))
 
   (for/vector ([x (in-range (vector-ref p 0))])
     (for/vector ([y (in-range (vector-ref p 1))])
@@ -125,6 +137,7 @@
 (define/contract (grid-ref g pos)
   ;; llTODO present:
   ;; This version checking compatibility of g and pos is a better specification
+  ;; than allowing an invalid pos for g
   ;; However the code relies on referencing invalid positions and
   ;; checking for #f
   ;; I changed the one section I found that does so:
