@@ -35,6 +35,9 @@
 
   (set-box! r* orig))
 
+;; llTODO present:
+;; Non-specific ctcs because this random stuff is rigged so
+;; doesn't work correctly?
 (define/contract (random n)
   (any/c . -> . exact-nonnegative-integer?)
 
