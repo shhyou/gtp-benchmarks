@@ -2,19 +2,19 @@
 ;; TODO use open?
 
 (provide
-  empty-cell%
-  void-cell%
-  door%
-  vertical-door%
-  horizontal-door%
-  char->cell%
-  wall%
-  void-cell%
-  cell%?
-  cell%/c
-  class-equal?
-  cell%
-)
+ empty-cell%
+ void-cell%
+ door%
+ vertical-door%
+ horizontal-door%
+ char->cell%
+ wall%
+ void-cell%
+ cell%?
+ cell%/c
+ class-equal?
+ cell%
+ )
 
 ;; -----------------------------------------------------------------------------
 
@@ -22,31 +22,67 @@
  racket/class
  "../base/un-types.rkt"
  racket/contract
-)
+ )
 (require (only-in racket/function
-                  curry))
+                  curry)
+         (only-in racket syntax-case syntax))
 (require (only-in "message-queue.rkt"
-  enqueue-message!
-))
+                  enqueue-message!
+                  ))
 (require (only-in racket/dict
-  dict-ref
-  dict-set!
-  dict-has-key?
-))
+                  dict-ref
+                  dict-set!
+                  dict-has-key?
+                  ))
+
 ;; =============================================================================
 
-(define cell%/c (class/c (field [items list?]     ;; ll: never seems to
-                                [occupant any/c]) ;; actually be used
-                         ;; lltodo present: I want these contracts to
-                         ;; apply to all cases: inherit, super,
-                         ;; override. How to do that?
-                         (inherit
-                          [free? (->m boolean?)]
-                          [show (->m char?)]
-                          [open (->m void?)]
-                          [close (->m void?)])))
+(define-syntax (class/c* stx)
+  (syntax-case stx (field/all all inherit+super)
+    [(_ (field/all fspec ...)
+        (all all-spec ...)
+        (inherit+super i+s-spec ...)
+        other-specs ...)
+     #'(class/c (field fspec ...)
+                (inherit-field fspec ...)
+                ;; all
+                (inherit all-spec ...)
+                (super all-spec ...)
+                (override all-spec ...)
+                ;; i+s
+                (inherit i+s-spec ...)
+                (super i+s-spec ...)
+                ;; rest
+                other-specs ...)]))
+
+(define ((equal-to/c thing) other)
+  (equal? thing other))
+
+(define-syntax-rule (make-cell%/c-with self-id show-char
+                                       free?/occupant-comparer)
+  (class/c* (field/all [items list?]     ;; ll: never seems to
+                       [occupant any/c]) ;; actually be used
+
+            (all
+             [open (->m void?)]
+             [close (->m void?)]
+             [free? (->m boolean?)])
+            (inherit+super
+             [show (->i ([self-id any/c])
+                        [result (self-id) show-char])])
+            (override
+             [show (->m char?)])
+
+            [free? (->i ([self-id any/c])
+                        [result (self-id)
+                                (curry free?/occupant-comparer
+                                       (get-field occupant
+                                                  self-id))])]))
+
+(define cell%/c (make-cell%/c-with self any/c (λ x #t)))
+
 (define/contract cell% ; some kind of obstacle by default
-  cell%/c
+  (make-cell%/c-with self #\* equal?)
   (class object%
     (inspect #f)
     (init-field [items    '()]
@@ -80,7 +116,7 @@
         [char char?])
        [result void?]
        #:post (c% char) (class-equal? (dict-ref chars->cell%s char (λ x (void)))
-                                c%))
+                                      c%))
 
   (dict-set! chars->cell%s char c%))
 
@@ -95,7 +131,11 @@
 (register-cell-type! cell% #\*)
 
 (define/contract empty-cell%
-  cell%/c
+  (make-cell%/c-with self
+                     (or/c #\space
+                           (send (get-field occupant self)
+                                 show))
+                     (not/c equal?))
   (class cell%
     (inspect #f)
     (inherit-field occupant)
@@ -109,7 +149,7 @@
 (register-cell-type! empty-cell% #\space)
 
 (define/contract void-cell%
-  cell%/c
+  (make-cell%/c-with self #\. equal?)
   (class cell%
     (inspect #f)
     (define/override (show) #\.) ; for testing only
@@ -117,7 +157,7 @@
 (register-cell-type! void-cell% #\.)
 
 (define/contract wall%
-  cell%/c
+  (make-cell%/c-with self #\X equal?)
   (class cell%
     (inspect #f)
     (define/override (show) #\X) ; for testing only
@@ -127,7 +167,9 @@
 (define double-bar? #t)
 (define-syntax-rule (define-wall name single-bar double-bar)
   (begin (define/contract name
-           cell%/c
+           (make-cell%/c-with self
+                              (if double-bar? double-bar single-bar)
+                              equal?)
            (class wall%
              (inspect #f)
              (define/override (show) (if double-bar? double-bar single-bar))
@@ -150,7 +192,7 @@
 (define-wall west-tee-wall%    #\u251c #\u2560)
 
 (define/contract door%
-  cell%/c
+  (make-cell%/c-with self #\* (not/c equal?))
   (class cell%
     (inspect #f)
     ;(init-field [open? #f])
@@ -168,7 +210,11 @@
     (super-new)))
 
 (define/contract vertical-door%
-  cell%/c
+  (make-cell%/c-with self
+                     (or/c #\_
+                           (send (get-field occupant self)
+                                 show))
+                     (not/c equal?))
   (class door%
     (inspect #f)
     (inherit-field #;open? occupant)
@@ -178,13 +224,24 @@
           #\|))
     (super-new)))
 (register-cell-type! vertical-door% #\|)
-(register-cell-type! (class vertical-door%
-                       (inspect #f)
-                       (super-new #;[open? #t]))
-                     #\_)
+
+(define/contract other-vertical-door%
+  (make-cell%/c-with self
+                     (or/c #\_
+                           (send (get-field occupant self)
+                                 show))
+                     (not/c equal?))
+  (class vertical-door%
+    (inspect #f)
+    (super-new #;[open? #t])))
+(register-cell-type! other-vertical-door% #\_)
 
 (define/contract horizontal-door%
-  cell%/c
+  (make-cell%/c-with self
+                     (or/c #\'
+                           (send (get-field occupant self)
+                                 show))
+                     (not/c equal?))
   (class door%
     (inspect #f)
     (inherit-field #;open? occupant)
@@ -194,9 +251,17 @@
           #\-))
     (super-new)))
 (register-cell-type! horizontal-door% #\-)
-(register-cell-type! (class horizontal-door%
-                       (inspect #f)
-                       (super-new #;[open? #t]))
-                     #\')
+
+(define/contract other-horizontal-door%
+  (make-cell%/c-with self
+                     (or/c #\'
+                           (send (get-field occupant self)
+                                 show))
+                     (not/c equal?))
+
+  (class horizontal-door%
+    (inspect #f)
+    (super-new #;[open? #t])))
+(register-cell-type! other-horizontal-door% #\')
 
 ;; TODO chests, entry/exit
