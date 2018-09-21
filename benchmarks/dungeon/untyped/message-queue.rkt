@@ -20,9 +20,9 @@
     (->i ([m string?])
          #:pre () (set! pre/queue-len (length message-queue))
          [result void?]
-         #:post (m) (and (string=? m (first message-queue))
-                         (= (length message-queue)
-                            (add1 pre/queue-len)))))
+         #:post (m) (and (= (length message-queue)
+                            (add1 pre/queue-len))
+                         (string=? m (first message-queue)))))
 
   (set! message-queue (cons m message-queue)))
 
