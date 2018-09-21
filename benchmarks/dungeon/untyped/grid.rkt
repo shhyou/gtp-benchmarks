@@ -39,7 +39,6 @@
 (define (arrayof val-ctc)
   (vectorof (vectorof val-ctc)))
 
-;; llTODO refine
 (define/contract (array-set! g p v)
   ;; ll: I wanted this to be parametric, but the parametric contract
   ;; makes the v in the array opaque, which is interfering with other
@@ -59,25 +58,15 @@
         [f (array-coord? . -> . any/c)])
        [result (arrayof any/c)]
        #:post (p f result)
-       (let ([res
-              (for/fold ([good-so-far? #t])
-                        ([x (in-range (vector-ref p 0))])
-                (unless good-so-far?
-                  (displayln (list x)))
+       (for/fold ([good-so-far? #t])
+                 ([x (in-range (vector-ref p 0))])
+         (and good-so-far?
+              (for/fold ([good-so-far? good-so-far?])
+                        ([y (in-range (vector-ref p 1))])
+                (define xy (vector x y))
                 (and good-so-far?
-                     (for/fold ([good-so-far? good-so-far?])
-                               ([y (in-range (vector-ref p 1))])
-                       (unless good-so-far?
-                         (define last-xy (vector x (sub1 y)))
-                         (displayln (list 'failed:
-                                          last-xy
-                                          (f last-xy)
-                                          (grid-ref result last-xy))))
-                       (define xy (vector x y))
-                       (and good-so-far?
-                            (equal? (f xy)
-                                    (grid-ref result xy))))))])
-         (or res (begin (displayln result) res))))
+                     (equal? (f xy)
+                             (grid-ref result xy)))))))
 
   (for/vector ([x (in-range (vector-ref p 0))])
     (for/vector ([y (in-range (vector-ref p 1))])
