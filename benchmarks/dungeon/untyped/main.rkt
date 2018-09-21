@@ -126,19 +126,32 @@
 
 ;; -----------------------------------------------------------------------------
 
+(define (room-bounds x y height width direction
+                     [dimension-randomizer identity])
+  (define min-x (match direction
+                  [(== down) x]
+                  ;; expanding north, we have to move the top of the room
+                  ;; up so the bottom reaches the starting point
+                  [(== up) (+ (- x height) 1)]
+                  ;; have the entrance be at a random position on the
+                  ;; entrance-side wall
+                  [else    (sub1 (- x (dimension-randomizer (- height 2))))]))
+  (define min-y (match direction
+                  ;; same idea as for x
+                  [(== right) y]
+                  [(== left)  (+ (- y width) 1)]
+                  [else       (sub1 (- y (dimension-randomizer (- width 2))))]))
+  (define max-x (+ min-x height))
+  (define max-y (+ min-y width))
+
+  (values min-x max-x
+          min-y max-y))
+
 (define ((coord-within-box/c start-pos height width direction) cell-coord)
   (match-define (vector start-x start-y) start-pos)
   (match-define (vector cell-x cell-y) cell-coord)
-  (define min-x (match direction
-                  [(== down) start-x]
-                  [(== up) (+ (- start-x height) 1)]
-                  [else    (sub1 (- start-x (- height 2)))]))
-  (define min-y (match direction
-                  [(== right) start-y]
-                  [(== left)  (+ (- start-y width) 1)]
-                  [else       (sub1 (- start-y (- width 2)))]))
-  (define max-x (+ min-x height))
-  (define max-y (+ min-y width))
+  (define-values (min-x max-x min-y max-y)
+    (room-bounds start-x start-y height width direction))
   (and (>= cell-x min-x)
        (<= cell-x max-x)
        (>= cell-y min-y)
@@ -170,21 +183,8 @@
 
   ;; height and width include a wall of one cell wide on each side
   (match-define (vector x y) pos)
-  (define min-x (match direction
-                  [(== down) x]
-                  ;; expanding north, we have to move the top of the room
-                  ;; up so the bottom reaches the starting point
-                  [(== up) (+ (- x height) 1)]
-                  ;; have the entrance be at a random position on the
-                  ;; entrance-side wall
-                  [else    (sub1 (- x (random (- height 2))))]))
-  (define min-y (match direction
-                  ;; same idea as for x
-                  [(== right) y]
-                  [(== left)  (+ (- y width) 1)]
-                  [else       (sub1 (- y (random (- width 2))))]))
-  (define max-x (+ min-x height))
-  (define max-y (+ min-y width))
+  (define-values (min-x max-x min-y max-y)
+    (room-bounds x y height width direction random))
   (define-values (success? poss->cells free-cells extension-points)
     (for*/fold
                ([success?         #t]
