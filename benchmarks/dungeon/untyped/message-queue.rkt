@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require racket/contract
-         (only-in racket/list first empty?))
+         (only-in racket/list first empty? rest))
 
 (provide
   enqueue-message!
@@ -16,11 +16,14 @@
   '())
 
 (define/contract (enqueue-message! m)
-  (let ([pre/queue-len #f])
+  (let ([pre/queue-len #f]
+        [pre/queue message-queue])
     (->i ([m string?])
-         #:pre () (set! pre/queue-len (length message-queue))
+         #:pre () (begin (set! pre/queue-len (length message-queue))
+                         (set! pre/queue-len message-queue))
          [result void?]
-         #:post (m) (and (= (length message-queue)
+         #:post (m) (and (equal? pre/queue (rest message-queue))
+                         (= (length message-queue)
                             (add1 pre/queue-len))
                          (string=? m (first message-queue)))))
 
