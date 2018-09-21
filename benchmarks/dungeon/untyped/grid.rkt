@@ -40,23 +40,18 @@
   (vectorof (vectorof val-ctc)))
 
 (define/contract (array-set! g p v)
-  ;; ll: I wanted this to be parametric, but the parametric contract
-  ;; makes the v in the array opaque, which is interfering with other
-  ;; contracts
-  (->i ([g (arrayof any/c)]
+  (->i ([g (arrayof cell%?)]
         [p array-coord?]
-        [v any/c])
+        [v cell%?])
        [result void?]
        #:post (g p v) (equal? v (grid-ref g p)))
 
   (vector-set! (vector-ref g (vector-ref p 0)) (vector-ref p 1) v))
 
 (define/contract (build-array p f)
-  ;; ll: Wanted this to be parametric, but post-condition needs to
-  ;; inspect result
   (->i ([p array-coord?]
-        [f (array-coord? . -> . any/c)])
-       [result (arrayof any/c)]
+        [f (array-coord? . -> . cell%?)])
+       [result (arrayof cell%?)]
        #:post (p f result)
        (for/fold ([good-so-far? #t])
                  ([x (in-range (vector-ref p 0))])
@@ -124,21 +119,14 @@
         #f))
 
 (define/contract (grid-ref g pos)
-  ;; llTODO present:
-  ;; This version checking compatibility of g and pos is a better specification
-  ;; than allowing an invalid pos for g
-  ;; However the code relies on referencing invalid positions and
-  ;; checking for #f
-  ;; I changed the one section I found that does so:
-  ;; main.rkt:190 (try-add-rectangle)
   (->i ([g grid?]
-        [pos (g) (and/c array-coord?
-                        (within-grid/c g))])
+        [pos array-coord?])
        [result (g pos)
-               (and/c cell%?
-                      (curry equal?
-                             (vector-ref (vector-ref g (vector-ref pos 0))
-                                         (vector-ref pos 1))))])
+               (or-#f/c
+                (and/c cell%?
+                       (curry equal?
+                              (vector-ref (vector-ref g (vector-ref pos 0))
+                                          (vector-ref pos 1)))))])
 
   (and (within-grid? g pos)
        (vector-ref (vector-ref g (vector-ref pos 0)) (vector-ref pos 1))))
@@ -146,28 +134,42 @@
 (define direction? (->* (array-coord?) [index?]
                         array-coord?))
 
-;; llTODO refine
-;; specify end result is exactly n away from pos
 (define/contract (left pos [n 1])
-  direction?
+  (and/c direction?
+         (->i ([pos array-coord?]
+               [n exact-nonnegative-integer?])
+              [result (pos n) (vector/c (vector-ref pos 0)
+                                        (max (- (vector-ref pos 1) n) 0))]))
 
   (vector (vector-ref pos 0)
           (max (- (vector-ref pos 1) n) 0)))
 
 (define/contract (right pos [n 1])
-  direction?
+  (and/c direction?
+         (->i ([pos array-coord?]
+               [n exact-nonnegative-integer?])
+              [result (pos n) (vector/c (vector-ref pos 0)
+                                        (max (+ (vector-ref pos 1) n) 0))]))
 
   (vector (vector-ref pos 0)
           (max (+ (vector-ref pos 1) n) 0)))
 
 (define/contract (up pos [n 1])
-  direction?
+  (and/c direction?
+         (->i ([pos array-coord?]
+               [n exact-nonnegative-integer?])
+              [result (pos n) (vector/c (max (- (vector-ref pos 0) n) 0)
+                                        (vector-ref pos 1))]))
 
   (vector (max (- (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
 
 (define/contract (down pos [n 1])
-  direction?
+  (and/c direction?
+         (->i ([pos array-coord?]
+               [n exact-nonnegative-integer?])
+              [result (pos n) (vector/c (max (+ (vector-ref pos 0) n) 0)
+                                        (vector-ref pos 1))]))
 
   (vector (max (+ (vector-ref pos 0) n) 0)
           (vector-ref pos 1)))
