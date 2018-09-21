@@ -171,7 +171,9 @@
                                                      width
                                                      direction))
                           cell%?)
-                 ;; llTODO can these be refined?
+                 ;; ll: I don't think these can (reasonably) be
+                 ;; refined (note that they still have the default
+                 ;; room contract, see definition of room-with/c)
                  any/c
                  any/c))])
 
