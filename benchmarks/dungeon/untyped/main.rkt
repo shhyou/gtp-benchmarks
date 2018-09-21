@@ -81,7 +81,8 @@
    poss->cells ; maps positions to cell constructors
    ;;            (so that we can construct the room later when we commit to it)
    free-cells   ; where monsters or treasure could go
-   extension-points)) ; where a corridor could sprout
+   extension-points) ; where a corridor could sprout
+  #:mutable)
 
 (define (room-with/c height/c
                      width/c
@@ -93,13 +94,8 @@
                    height/c)
             (and/c index?
                    width/c)
-
-            ;; llTODO present: Can't specify cell%/c?
-            ;; (and/c (alistof array-coord? cell%/c)
-                   ;; poss->cells/c)
-            (and/c (alistof array-coord? any/c)
+            (and/c (alistof array-coord? cell%/c)
                    poss->cells/c)
-
             (and/c (listof array-coord?)
                    free-cells/c)
             (and/c (listof array-coord?)
@@ -174,9 +170,7 @@
                                                      height
                                                      width
                                                      direction))
-                          ;; llTODO present:
-                          ;; can't specify cell%? ?
-                          any/c #;cell%?)
+                          cell%?)
                  ;; llTODO can these be refined?
                  any/c
                  any/c))])
@@ -198,11 +192,7 @@
        [(not success?)
         (values success? poss->cells free-cells extension-points)]
        [success?
-        ;; (define c (and (index? x) (index? y) (grid-ref grid (vector x y))))
-
-        (define xy-pt (vector x y))
-        (define c (and (index? x) (index? y) (within-grid? grid xy-pt)
-                       (grid-ref grid xy-pt)))
+        (define c (and (index? x) (index? y) (grid-ref grid (vector x y))))
 
         (cond [(and c ; not out of bounds
                     (or (is-a? c void-cell%) ; unused yet
@@ -235,12 +225,10 @@
         [room any-room?])
        [result void?]
        #:post (grid room)
-       (for/fold ([good-so-far? #t])
-                 ([pos+cell% (in-list (room-poss->cells room))])
+       (for/and ([pos+cell% (in-list (room-poss->cells room))])
          (match-define (cons pos poss-cell%) pos+cell%)
-         (and good-so-far?
-              (is-a? (grid-ref grid pos)
-                     poss-cell%))))
+         (is-a? (grid-ref grid pos)
+                poss-cell%)))
 
   (for ([pos+cell% (in-list (room-poss->cells room))])
     (match-define (cons pos cell%) pos+cell%)
@@ -324,9 +312,7 @@
                                                      11
                                                      11
                                                      dir))
-                          ;; llTODO present:
-                          ;; can't specify cell%? ?
-                          any/c)
+                          cell%?)
                  any/c
                  any/c))])
 
@@ -353,9 +339,7 @@
                                                        h
                                                        w
                                                        dir))
-                            ;; llTODO present:
-                            ;; can't specify cell%? ?
-                            any/c)
+                            cell%?)
                    any/c
                    any/c)))])
 
@@ -526,8 +510,7 @@
   grid)
 
 
-;; lltodo present: is it worth coming up with a specification of what
-;; it means to smooth a wall?
+;; ll: not worth coming up with a specification of "smooth walls" for now.
 (define/contract (smooth-single-wall grid pos)
   (grid? array-coord? . -> . void?)
 
