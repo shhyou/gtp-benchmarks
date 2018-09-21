@@ -90,7 +90,7 @@
                      free-cells/c
                      extension-points/c)
   (struct/c room
-            (and/c index? 
+            (and/c index?
                    height/c)
             (and/c index?
                    width/c)
@@ -111,7 +111,7 @@
   (hash/c array-coord? boolean?)
   (make-hash))
 
-(define/contract free-cache 
+(define/contract free-cache
   (hash/c array-coord? boolean?)
   (make-hash))
 
@@ -161,7 +161,7 @@
         [width index?]
         [direction direction?])
        [result (pos height width direction)
-               (or-#f/c 
+               (or-#f/c
                 (room-with/c
                  (=/c height)
                  (=/c width)
@@ -300,7 +300,7 @@
   (or (eq? dir up) (eq? dir down)))
 
 (define/contract (new-room grid pos dir)
-  (->i ([grid grid?] 
+  (->i ([grid grid?]
         [pos array-coord?]
         [dir direction?])
        [result (pos dir)
@@ -324,7 +324,7 @@
   (try-add-rectangle grid pos w h dir))
 
 (define/contract (new-corridor grid pos dir)
-  (->i ([grid grid?] 
+  (->i ([grid grid?]
         [pos array-coord?]
         [dir direction?])
        [result (pos dir)
@@ -357,8 +357,39 @@
   (define w (if h? len 3))
   (try-add-rectangle grid pos h w dir))
 
+
+(define (door-count grid)
+  (define height (grid-height grid))
+  (define width (grid-width grid))
+  (for/fold ([doors 0])
+            ([row-index (in-range height)])
+    ;; lltodo: test
+    (+ doors
+       (vector-count (curry is-a? door%)
+                     (vector-ref grid row-index)))))
+
+(define (room-count grid)
+  (/ (door-count grid) 4))
+
+(define ((room-count>=/c n) grid)
+  (>= (room-count grid) n))
+
+;; ll: temporal: this should display things IF `animate-generation?`
 (define/contract (generate-dungeon encounters)
-  ((listof exact-nonnegative-integer?) . -> . grid?)
+  ;; lltodo: This could be more specific: returned grid should contain
+  ;; at least (length encounters) rooms.
+  ;; But this requires reverse-engineering rooms from a finished grid.
+  ;;
+  ;; It could potentially be checked by counting the number of times
+  ;; commit-room is called (or add-room)
+  ;; Or maybe by *counting the number of door cells and quartering it?*
+  (->i ([encounters (listof exact-nonnegative-integer?)])
+       [result (encounters) (and/c grid?
+                                   (room-count>=/c (length encounters)))])
+
+  ;; Simple version:
+  ;; ((listof exact-nonnegative-integer?) . -> .
+  ;;                                      grid?)
 
   ;; a room for each encounter, and a few empty ones
   (define n-rooms (max (length encounters) (random-between 6 9)))
