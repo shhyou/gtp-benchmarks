@@ -31,13 +31,13 @@
 (define r* (box orig))
 
 (define/contract (reset!)
-  (-> void?)
+  (->* ()
+       void?
+       #:post (equal? r* orig))
 
   (set-box! r* orig))
 
-;; llTODO present:
-;; Non-specific ctcs because this random stuff is rigged so
-;; doesn't work correctly?
+;; Non-specific ctc because this random stuff is rigged to be deterministic
 (define/contract (random n)
   (any/c . -> . exact-nonnegative-integer?)
 
