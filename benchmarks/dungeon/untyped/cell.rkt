@@ -35,12 +35,16 @@
 ))
 ;; =============================================================================
 
-(define cell%/c (class/c (field [items list?]
-                                [occupant any/c]) ;; llTODO specify
-                         [free? (->m boolean?)]
-                         [show (->m char?)]
-                         [open (->m void?)]
-                         [close (->m void?)]))
+(define cell%/c (class/c (field [items list?]     ;; ll: never seems to
+                                [occupant any/c]) ;; actually be used
+                         ;; lltodo present: I want these contracts to
+                         ;; apply to all cases: inherit, super,
+                         ;; override. How to do that?
+                         (inherit
+                          [free? (->m boolean?)]
+                          [show (->m char?)]
+                          [open (->m void?)]
+                          [close (->m void?)])))
 (define/contract cell% ; some kind of obstacle by default
   cell%/c
   (class object%
