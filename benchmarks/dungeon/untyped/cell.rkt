@@ -22,6 +22,7 @@
  racket/class
  "../base/un-types.rkt"
  racket/contract
+ "../../../ctcs/precision-config.rkt"
  )
 (require (only-in racket/function
                   curry)
@@ -55,9 +56,6 @@
                 ;; rest
                 other-specs ...)]))
 
-(define ((equal-to/c thing) other)
-  (equal? thing other))
-
 (define-syntax-rule (make-cell%/c-with self-id show-char
                                        free?/occupant-comparer)
   (class/c* (field/all [items list?]     ;; ll: never seems to
@@ -80,9 +78,12 @@
                                                   self-id))])]))
 
 (define cell%/c (make-cell%/c-with self any/c (λ x #t)))
+(define cell%? (instanceof/c cell%/c))
 
 (define/contract cell% ; some kind of obstacle by default
-  (make-cell%/c-with self #\* equal?)
+  (configurable-ctc
+   [max (make-cell%/c-with self #\* equal?)]
+   [types cell%/c])
   (class object%
     (inspect #f)
     (init-field [items    '()]
@@ -97,12 +98,12 @@
       (enqueue-message! "Can't close that."))
     (super-new)))
 
-(define cell%? (instanceof/c cell%/c))
-
 ;; maps printed representations to cell classes
 ;; for map parsing
 (define/contract chars->cell%s
-  (hash/c char? cell%/c)
+  (configurable-ctc
+   [max (hash/c char? cell%/c)]
+   [types hash?])
   (make-hash))
 
 ;; Workaround for bug(?) in class comparison:
@@ -112,30 +113,37 @@
        (subclass? b% a%)))
 
 (define/contract (register-cell-type! c% char)
-  (->i ([c% cell%/c]
-        [char char?])
-       [result void?]
-       #:post (c% char) (class-equal? (dict-ref chars->cell%s char (λ x (void)))
-                                      c%))
+  (configurable-ctc
+   [max (->i ([c% cell%/c]
+              [char char?])
+             [result void?]
+             #:post (c% char) (class-equal? (dict-ref chars->cell%s char (λ x (void)))
+                                            c%))]
+   [types (cell%/c char? . -> . void?)])
 
   (dict-set! chars->cell%s char c%))
 
+
 (define/contract (char->cell% char)
-  (->i ([char (and/c char? (curry dict-has-key? chars->cell%s))])
-       [result (char)
-               (and/c cell%/c
-                      (curry class-equal? (dict-ref chars->cell%s char)))])
+  (configurable-ctc
+   [max (->i ([char (and/c char? (curry dict-has-key? chars->cell%s))])
+             [result (char)
+                     (and/c cell%/c
+                            (curry class-equal? (dict-ref chars->cell%s char)))])]
+   [types (char? . -> . cell%?)])
 
   (dict-ref chars->cell%s char))
 
 (register-cell-type! cell% #\*)
 
 (define/contract empty-cell%
-  (make-cell%/c-with self
-                     (or/c #\space
-                           (send (get-field occupant self)
-                                 show))
-                     (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self
+                           (or/c #\space
+                                 (send (get-field occupant self)
+                                       show))
+                           (not/c equal?))]
+   [types cell%/c])
   (class cell%
     (inspect #f)
     (inherit-field occupant)
@@ -149,7 +157,9 @@
 (register-cell-type! empty-cell% #\space)
 
 (define/contract void-cell%
-  (make-cell%/c-with self #\. equal?)
+  (configurable-ctc
+   [max (make-cell%/c-with self #\. equal?)]
+   [types cell%/c])
   (class cell%
     (inspect #f)
     (define/override (show) #\.) ; for testing only
@@ -157,7 +167,9 @@
 (register-cell-type! void-cell% #\.)
 
 (define/contract wall%
-  (make-cell%/c-with self #\X equal?)
+  (configurable-ctc
+   [max (make-cell%/c-with self #\X equal?)]
+   [types cell%/c])
   (class cell%
     (inspect #f)
     (define/override (show) #\X) ; for testing only
@@ -167,9 +179,11 @@
 (define double-bar? #t)
 (define-syntax-rule (define-wall name single-bar double-bar)
   (begin (define/contract name
-           (make-cell%/c-with self
-                              (if double-bar? double-bar single-bar)
-                              equal?)
+           (configurable-ctc
+            [max (make-cell%/c-with self
+                                    (if double-bar? double-bar single-bar)
+                                    equal?)]
+            [types cell%/c])
            (class wall%
              (inspect #f)
              (define/override (show) (if double-bar? double-bar single-bar))
@@ -192,7 +206,9 @@
 (define-wall west-tee-wall%    #\u251c #\u2560)
 
 (define/contract door%
-  (make-cell%/c-with self #\* (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self #\* (not/c equal?))]
+   [types cell%/c])
   (class cell%
     (inspect #f)
     ;(init-field [open? #f])
@@ -210,11 +226,13 @@
     (super-new)))
 
 (define/contract vertical-door%
-  (make-cell%/c-with self
-                     (or/c #\_
-                           (send (get-field occupant self)
-                                 show))
-                     (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self
+                           (or/c #\_
+                                 (send (get-field occupant self)
+                                       show))
+                           (not/c equal?))]
+   [types cell%/c])
   (class door%
     (inspect #f)
     (inherit-field #;open? occupant)
@@ -226,22 +244,26 @@
 (register-cell-type! vertical-door% #\|)
 
 (define/contract other-vertical-door%
-  (make-cell%/c-with self
-                     (or/c #\_
-                           (send (get-field occupant self)
-                                 show))
-                     (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self
+                           (or/c #\_
+                                 (send (get-field occupant self)
+                                       show))
+                           (not/c equal?))]
+   [types cell%/c])
   (class vertical-door%
     (inspect #f)
     (super-new #;[open? #t])))
 (register-cell-type! other-vertical-door% #\_)
 
 (define/contract horizontal-door%
-  (make-cell%/c-with self
-                     (or/c #\'
-                           (send (get-field occupant self)
-                                 show))
-                     (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self
+                           (or/c #\'
+                                 (send (get-field occupant self)
+                                       show))
+                           (not/c equal?))]
+   [types cell%/c])
   (class door%
     (inspect #f)
     (inherit-field #;open? occupant)
@@ -253,11 +275,13 @@
 (register-cell-type! horizontal-door% #\-)
 
 (define/contract other-horizontal-door%
-  (make-cell%/c-with self
-                     (or/c #\'
-                           (send (get-field occupant self)
-                                 show))
-                     (not/c equal?))
+  (configurable-ctc
+   [max (make-cell%/c-with self
+                           (or/c #\'
+                                 (send (get-field occupant self)
+                                       show))
+                           (not/c equal?))]
+   [types cell%/c])
 
   (class horizontal-door%
     (inspect #f)

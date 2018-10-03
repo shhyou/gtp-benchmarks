@@ -1,6 +1,7 @@
 #lang racket/base
 
-(require racket/contract)
+(require racket/contract
+         "../../../ctcs/precision-config.rkt")
 
 (provide
   index?
@@ -8,13 +9,17 @@
 )
 
 (define/contract (assert v p)
-  (parametric->/c [A] (A (A . -> . boolean?) . -> . A))
+  (configurable-ctc
+   [max (parametric->/c [A] (A (A . -> . boolean?) . -> . A))]
+   [types (any/c (any/c . -> . boolean?) . -> . any/c)])
 
   (if (p v)
     v
     (raise-user-error 'assert)))
 
 (define/contract (index? v)
-  (any/c . -> . boolean?)
+  (configurable-ctc
+   [max (any/c . -> . boolean?)]
+   [types (any/c . -> . boolean?)])
 
   (and (exact-nonnegative-integer? v) (< v 9999999)))
