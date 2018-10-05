@@ -1,5 +1,10 @@
 #lang racket/base
 
+(require racket/contract
+         racket/list
+         "../../../ctcs/precision-config.rkt"
+         (only-in racket/function curry))
+
 ;; TODO make stacks be objects ?
 
 ;; Forth stacks,
@@ -47,36 +52,96 @@
 
 ;; =============================================================================
 
-(define (list->stack xs)
+(define stackof listof)
+(define stack? list?)
+(define non-empty-stack? (and/c stack?
+                                (not/c empty?)))
+(define ((stack-with-min-size/c n) S)
+  (and (stack? S)
+       (>= (length S) n)))
+
+(define/contract (list->stack xs)
+  (configurable-ctc
+   [max (->i ([xs list?])
+             [result (xs) (curry equal? xs)])]
+   [types (list? . -> . stack?)])
+
   (for/fold ([S (stack-init)])
             ([x (in-list (reverse xs))])
     (stack-push S x)))
 
-(define (stack-drop S)
+(define/contract (stack-drop S)
+  (configurable-ctc
+   [max (->i ([S non-empty-stack?])
+             [result (S) (rest S)])]
+   [types (stack? . -> . stack?)])
+
   (let-values ([(_v S+) (stack-pop S)])
     S+))
 
-(define (stack-dup S)
+(define/contract (stack-dup S)
+  (configurable-ctc
+   [max (->i ([S non-empty-stack?])
+             [result (S) (cons (first S) S)])]
+   [types (stack? . -> . stack?)])
+
   (let-values ([(v S+) (stack-pop S)])
     (stack-push (stack-push S+ v) v)))
 
-(define (stack-init)
+(define/contract (stack-init)
+  (configurable-ctc
+   [max (-> (and/c stack? empty?))]
+   [types (-> stack?)])
+
   '())
 
-(define (stack-over S)
+(define/contract (stack-over S)
+  (configurable-ctc
+   [max (->i ([S (stack-with-min-size/c 2)])
+             [result (S)
+                     (cons (first S)
+                           (cons (second S)
+                                 (cons (first S)
+                                       (rest (rest S)))))])]
+   [types (stack? . -> . stack?)])
+
   (let*-values ([(v1 S1) (stack-pop S)]
                 [(v2 S2) (stack-pop S1)])
     (stack-push (stack-push (stack-push S2 v1) v2) v1)))
 
-(define (stack-pop S)
+(define/contract (stack-pop S)
+  (configurable-ctc
+   [max (->i ([S stack?])
+             [result (S)
+                     (if (empty? S)
+                         (void)
+                         (values (first S)
+                                 (rest S)))])]
+   [types (stack? . -> . (values any/c stack?))])
+
   (if (null? S)
       (raise-user-error "empty stack")
       (values (car S) (cdr S))))
 
-(define (stack-push S v)
+(define/contract (stack-push S v)
+  (configurable-ctc
+   [max (->i ([S stack?]
+              [v any/c])
+             [result (S v)
+                     (cons v S)])]
+   [types (stack? any/c . -> . stack?)])
+
   (cons v S))
 
-(define (stack-swap S)
+(define/contract (stack-swap S)
+  (configurable-ctc
+   [max (->i ([S (stack-with-min-size/c 2)])
+             [result (S)
+                     (cons (second S)
+                           (cons (first S)
+                                 (rest (rest S))))])]
+   [types (stack? . -> . stack?)])
+
   (let*-values ([(v1 S1) (stack-pop S)]
                 [(v2 S2) (stack-pop S1)])
     (stack-push (stack-push S2 v1) v2)))
