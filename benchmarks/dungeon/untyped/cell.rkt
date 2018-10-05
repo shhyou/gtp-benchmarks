@@ -23,10 +23,10 @@
  "../base/un-types.rkt"
  racket/contract
  "../../../ctcs/precision-config.rkt"
+ (only-in "../../../ctcs/common.rkt" class/c*)
  )
 (require (only-in racket/function
-                  curry)
-         (only-in racket syntax-case syntax))
+                  curry))
 (require (only-in "message-queue.rkt"
                   enqueue-message!
                   ))
@@ -37,24 +37,6 @@
                   ))
 
 ;; =============================================================================
-
-(define-syntax (class/c* stx)
-  (syntax-case stx (field/all all inherit+super)
-    [(_ (field/all fspec ...)
-        (all all-spec ...)
-        (inherit+super i+s-spec ...)
-        other-specs ...)
-     #'(class/c (field fspec ...)
-                (inherit-field fspec ...)
-                ;; all
-                (inherit all-spec ...)
-                (super all-spec ...)
-                (override all-spec ...)
-                ;; i+s
-                (inherit i+s-spec ...)
-                (super i+s-spec ...)
-                ;; rest
-                other-specs ...)]))
 
 (define-syntax-rule (make-cell%/c-with self-id show-char
                                        free?/occupant-comparer)
