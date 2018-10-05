@@ -3,7 +3,9 @@
 (require (only-in racket/string string-join)
          (only-in "../../../ctcs/common.rkt"
            memberof/c)
-         racket/contract)
+         racket/contract
+         "../../../ctcs/precision-config.rkt"
+         (only-in racket/list first rest))
 
 (define binop* '(+ - *))
 (define other* '(dup drop over swap))
@@ -21,7 +23,8 @@
 (define/contract (random-def)
   (configurable-ctc
    [max (let ([new*-len/before #f])
-          (->* #:pre (set! new*-len/before (length (unbox new*)))
+          (->* ()
+               #:pre (set! new*-len/before (length (unbox new*)))
                #rx"define \\(([a-zA-Z0-9] )+\\) "
                #:post (let* ([new** (unbox new*)]
                              [new**/first (first new**)])
