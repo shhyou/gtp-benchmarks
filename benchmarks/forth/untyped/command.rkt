@@ -12,6 +12,10 @@
  racket/class
  (only-in racket/string string-join)
  (for-syntax racket/base racket/syntax syntax/parse)
+ racket/contract
+ "../../../ctcs/precision-config.rkt"
+ (only-in racket/function curry)
+ (only-in "../../../ctcs/common.rkt" class/c*)
 )
 (require (only-in "stack.rkt"
   stack-drop
@@ -21,6 +25,7 @@
   stack-pop
   stack-push
   stack-swap
+  stack?
 ))
 
 (define (assert v p)
@@ -30,7 +35,26 @@
 ;; =============================================================================
 ;; -- Commands
 
-(define command%
+(define env? (listof command%?))
+(define ((env-with/c cmd-ids) env)
+  (cond [(env? env)
+         (define env-cmd-ids
+           (for/list ([env-cmd (in-list env)])
+             (get-field id env-cmd)))
+         (for/and ([c (in-list cmd-ids)])
+           (member c env-cmd-ids))]
+        [else #f]))
+
+(define command%/c
+  (class/c* (field/all [id symbol?]
+                       [descr string?]
+                       [exec (env? stack? v? . -> . (or-#f/c
+                                                     (cons/c env? stack?)))])))
+
+(define command%? (instanceof/c command%/c))
+
+(define/contract command%
+  command%/c
   (class object%
     (super-new)
     (init-field
@@ -39,7 +63,14 @@
       exec)))
 
 ;; True if the argument is a list with one element
-(define (singleton-list? x)
+(define/contract (singleton-list? x)
+  (configurable-ctc
+   [max (->i ([x list?])
+             [result (x) (if (empty? x)
+                             #f
+                             (empty? (rest x)))])]
+   [types (list? . -> . boolean?)])
+
   (and (list? x)
        (not (null? x))
        (null? (cdr x))))
@@ -47,7 +78,17 @@
 ;; Create a binary operation command.
 ;; Command is recognized by its identifier,
 ;;  the identifier is then applied to the top 2 numbers on the stack.
-(define binop-command%
+(define binop-command%/c
+  (and/c command%/c
+         (class/c* (field/all
+                    [binop symbol?]
+                    [exec any/c #|Same as command%/c|#]))))
+
+(define/contract binop-command%
+  (configurable-ctc
+   [max binop-command%/c]
+   [types binop-command%/c])
+
   (class command%
     (init-field
      binop)
@@ -76,79 +117,136 @@
                (cons E (stack-cmd S))))))]))
 
 ;; Default environment of commands
-(define CMD* (list
-  (new command%
-    (id 'exit)
-    (descr "End the REPL session")
-    (exec (lambda (E S v)
-      (if (or (eof-object? v)
-              (and (symbol? v)
-                   (exit? v))
-              (and (list? v)
-                   (not (null? v))
-                   (exit? (car v))))
-          'EXIT
-          #f))))
-  (new command%
-   (id 'help)
-   (descr "Print help information")
-   (exec (lambda (E S v)
-     (cond
-      [(and (symbol? v) (help? v))
-       (displayln (show-help E))
-       (cons E S)]
-      [(and (list? v) (not (null? v)) (help? (car v)))
-       (displayln (show-help E (and (not (null? (cdr v))) (cdr v))))
-       (cons E S)]
-      [else
-       #f]))))
-  (instantiate binop-command% (+) (descr "Add the top two numbers on the stack"))
-  (instantiate binop-command% (-) (descr "Subtract the top item of the stack from the second item."))
-  (instantiate binop-command% (*) (descr "Multiply the top two item on the stack."))
-  ;(instantiate binop-command% (/) (descr "Divide the top item of the stack by the second item."))
-  (make-stack-command drop "Drop the top item from the stack")
-  (make-stack-command dup  "Duplicate the top item of the stack")
-  (make-stack-command over "Duplicate the top item of the stack, but place the duplicate in the third position of the stack.")
-  (make-stack-command swap "Swap the first two numbers on the stack")
-  (new command%
-    (id 'push)
-    (descr "Push a number onto the stack")
-    (exec (lambda (E S v)
-      (match v
-        [`(push ,(? exact-integer? n))
-         (cons E (stack-push S n))]
-        [`(,(? exact-integer? n))
-         (cons E (stack-push S n))]
-        [_ #f]))))
-  (new command%
-    (id 'show)
-    (descr "Print the current stack")
-    (exec (lambda (E S v)
-      (match v
-        [`(,(? show?))
-         (displayln S)
-         (cons E S)]
-        [_ #f]))))
-))
+(define/contract CMD*
+  (configurable-ctc
+   [max env?]
+   [types env?])
 
-(define (exit? sym)
+  (list
+   (new command%
+        (id 'exit)
+        (descr "End the REPL session")
+        (exec (lambda (E S v)
+                (if (or (eof-object? v)
+                        (and (symbol? v)
+                             (exit? v))
+                        (and (list? v)
+                             (not (null? v))
+                             (exit? (car v))))
+                    'EXIT
+                    #f))))
+   (new command%
+        (id 'help)
+        (descr "Print help information")
+        (exec (lambda (E S v)
+                (cond
+                  [(and (symbol? v) (help? v))
+                   (displayln (show-help E))
+                   (cons E S)]
+                  [(and (list? v) (not (null? v)) (help? (car v)))
+                   (displayln (show-help E (and (not (null? (cdr v))) (cdr v))))
+                   (cons E S)]
+                  [else
+                   #f]))))
+   (instantiate binop-command% (+)
+     (descr "Add the top two numbers on the stack"))
+   (instantiate binop-command% (-)
+     (descr "Subtract the top item of the stack from the second item."))
+   (instantiate binop-command% (*)
+     (descr "Multiply the top two item on the stack."))
+   #;(instantiate binop-command% (/)
+       (descr "Divide the top item of the stack by the second item."))
+   (make-stack-command drop
+                       "Drop the top item from the stack")
+   (make-stack-command dup
+                       "Duplicate the top item of the stack")
+   (make-stack-command over
+                       "Duplicate the top item of the stack, but place the duplicate in the third position of the stack.")
+   (make-stack-command swap 
+                       "Swap the first two numbers on the stack")
+   (new command%
+        (id 'push)
+        (descr "Push a number onto the stack")
+        (exec (lambda (E S v)
+                (match v
+                  [`(push ,(? exact-integer? n))
+                   (cons E (stack-push S n))]
+                  [`(,(? exact-integer? n))
+                   (cons E (stack-push S n))]
+                  [_ #f]))))
+   (new command%
+        (id 'show)
+        (descr "Print the current stack")
+        (exec (lambda (E S v)
+                (match v
+                  [`(,(? show?))
+                   (displayln S)
+                   (cons E S)]
+                  [_ #f]))))
+   ))
+
+(define/contract (exit? sym)
+  (configurable-ctc
+   [max (->i ([sym symbol?])
+             [result (sym)
+                     (memq sym '(exit quit q leave bye))])]
+   [types (symbol? . -> . boolean?)])
+
   (and (memq sym '(exit quit q leave bye)) #t))
 
 ;; Search the environment for a command with `id` equal to `sym`
-(define (find-command E sym)
+(define/contract (find-command E sym)
+  (configurable-ctc
+   [max (->i ([E env?]
+              [sym symbol?])
+             [result (E)
+                     (and (not (empty? E))
+                          (get-field id (first E)))])]
+   [types (env? symbol? . -> . symbol?)])
+
   (for/or ([c (in-list E)])
     (get-field id c) (error 'no)))
     ;(if (eq? sym (get-field id c)) c #f)))
 
-(define (help? sym)
+(define/contract (help? sym)
+  (configurable-ctc
+   [max (->i ([sym symbol?])
+             [result (sym)
+                     (memq sym '(help ? ??? -help --help h))])]
+   [types (symbol? . -> . boolean?)])
+
   (and (memq sym '(help ? ??? -help --help h)) #t))
 
-(define (show? sym)
+(define/contract (show? sym)
+  (configurable-ctc
+   [max (->i ([sym symbol?])
+             [result (sym)
+                     (memq sym '(show print pp ls stack))])]
+   [types (symbol? . -> . boolean?)])
+
   (and (memq sym '(show print pp ls stack)) #t))
 
 ;; Print a help message.
 ;; If the optional argument is given, try to print information about it.
-(define (show-help E [v #f])
+(define/contract (show-help E [v #f])
+  (configurable-ctc
+   [max (->i ([E env?]
+              [v any/c])
+             [result string?]
+             #:post (E v result)
+             (regexp-match?
+              (match v
+                [#f (and (= (length (string-split result "\n"))
+                            (add1 (length E)))
+                         "^Available commands:")]
+                [(or (list (? symbol? s)) (? symbol? s))
+                 (if (find-command E s)
+                     (get-field descr (find-command E s))
+                     (format "Unknown command '~a'" s))]
+                [x (format "Cannot help with '~a'" x)])
+              result))]
+   [types (env? any/c . -> . string?)])
+
   (match v
     [#f
      (string-join
