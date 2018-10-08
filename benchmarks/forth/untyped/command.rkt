@@ -15,7 +15,7 @@
  racket/contract
  "../../../ctcs/precision-config.rkt"
  (only-in racket/function curry)
- (only-in racket/list empty? first rest)
+ (only-in racket/list empty? first second rest)
  (only-in "../../../ctcs/common.rkt" class/c* or-#f/c)
 )
 (require (only-in "stack.rkt"
@@ -35,6 +35,10 @@
 
 ;; =============================================================================
 ;; -- Commands
+
+;; lltodo can these command% ctcs be any more precise?
+;; Yes: by incorporating knowledge about the behavior of exec for each
+;; command.
 
 (define command%/c
   (class/c*
@@ -73,6 +77,34 @@
            (member c env-cmd-ids))]
         [else #f]))
 
+
+(require (for-syntax syntax/parse))
+(define-syntax (command%/c-with-exec stx)
+  (syntax-parse stx
+    #:datum-literals (args type result)
+    [(_ (~optional (type command%-c-type))
+        (args env-name stack-name val-name)
+        [result result-ctc]
+        (~optional (~seq (~datum #:post) post-condition)))
+     #`(and/c (instanceof/c
+               #,(if (attribute command%-c-type)
+                     #'command%-c-type
+                     #'command%/c))
+              (instanceof/c
+               (class/c*
+                (field/all
+                 [exec (->i ([env-name env?]
+                             [stack-name stack?]
+                             [val-name any/c])
+                            [result (env-name stack-name val-name)
+                                    result-ctc]
+                            #,@(if (attribute post-condition)
+                                   #'(#:post
+                                      (env-name stack-name val-name)
+                                      post-condition)
+                                   #'()))]))))]))
+
+
 ;; True if the argument is a list with one element
 (define/contract (singleton-list? x)
   (configurable-ctc
@@ -91,9 +123,23 @@
 ;;  the identifier is then applied to the top 2 numbers on the stack.
 (define binop-command%/c
   (and/c command%/c
+         ;; lltodo this may be wrong: not sure if field spec disallows
+         ;; other fields from being present (like binop)
          (class/c* (field/all
                     [binop symbol?]
                     [exec any/c #|Same as command%/c|#]))))
+
+(define-syntax (binop-command%/c-for stx)
+  (syntax-parse stx
+    [(_ binop)
+     #'(command%/c-with-exec
+        (type binop-command%/c)
+        (args E S v)
+        [result
+         (or-#f/c
+          (cons E
+                (cons (binop (second S) (first S))
+                      (rest (rest S)))))])]))
 
 (define/contract binop-command%
   (configurable-ctc
@@ -127,10 +173,93 @@
                (eq? '#,(syntax-e #'opcode) (car v))
                (cons E (stack-cmd S))))))]))
 
+(define (is-or-starts-with? predicate v)
+  (or (and (symbol? v)
+           (predicate v))
+      (and (list? v)
+           (not (empty? v))
+           (predicate (first v)))))
+
 ;; Default environment of commands
 (define/contract CMD*
   (configurable-ctc
-   [max env?]
+   [max (and/c env?
+               (list/c
+                ;; exit
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (or (eof-object? v)
+                                 (is-or-starts-with? exit? v))
+                             'EXIT
+                             #f)])
+                ;; help
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? help? v)
+                             (cons E S)
+                             #f)])
+
+                (binop-command%/c-for +)
+                (binop-command%/c-for -)
+                (binop-command%/c-for *)
+
+                ;; drop
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? (curry equal? 'stack-drop)
+                                                 v)
+                             (cons E (rest S))
+                             #f)])
+                ;; dup
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? (curry equal? 'stack-dup)
+                                                 v)
+                             (cons E (cons (first S) S))
+                             #f)])
+                ;; over
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? (curry equal? 'stack-over)
+                                                 v)
+                             (cons E (cons (first S)
+                                           (cons (second S)
+                                                 (cons (first S)
+                                                       (rest (rest S))))))
+                             #f)])
+                ;; swap
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? (curry equal? 'stack-swap)
+                                                 v)
+                             (cons E
+                                   (cons (second S)
+                                         (cons (first S)
+                                               (rest (rest S)))))
+                             #f)])
+                ;; push
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (or (and (list? v)
+                                      (>= (length v) 1)
+                                      (exact-integer? (first v)))
+                                 (and (list? v)
+                                      (>= (length v) 2)
+                                      (equal? (first v) 'push)
+                                      (exact-integer? (second v))))
+                             (cons E
+                                   (cons (if (exact-integer? (first v))
+                                             (first v)
+                                             (second v))
+                                         S))
+                             #f)])
+                ;; show
+                ;; lltemporal: prints
+                (command%/c-with-exec
+                 (args E S v)
+                 [result (if (is-or-starts-with? (curry equal? 'show))
+                             (cons E S)
+                             #f)])))]
    [types env?])
 
   (list
