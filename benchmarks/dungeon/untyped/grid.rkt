@@ -13,7 +13,6 @@
   build-array
   array-coord?
   direction?
-  or-#f/c
   arrayof
   grid?
   within-grid?
@@ -26,6 +25,7 @@
   ;math/array ;; TODO it'd be nice to use this
  racket/contract
  "../../../ctcs/precision-config.rkt"
+ (only-in "../../../ctcs/common.rkt" or-#f/c)
 )
 (require (only-in "cell.rkt"
   char->cell%
@@ -141,9 +141,7 @@
 (define ((within-grid/c g) pos)
   (within-grid? g pos))
 
-(define (or-#f/c ctc)
-  (or/c ctc
-        #f))
+
 
 (define/contract (grid-ref g pos)
   (configurable-ctc

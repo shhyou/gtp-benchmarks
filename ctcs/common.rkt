@@ -28,3 +28,7 @@
                 (~? (super i+s-spec ...))
                 ;; rest
                 other-specs ...)]))
+
+(define (or-#f/c ctc)
+  (or/c ctc
+        #f))

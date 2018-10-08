@@ -9,6 +9,7 @@
   racket/match
   racket/contract
   "../../../ctcs/precision-config.rkt"
+  (only-in "../../../ctcs/common.rkt" or-#f/c)
 )
 (require (only-in racket/set
   set-intersect
@@ -56,7 +57,6 @@
   within-grid?
   within-grid/c
   direction?
-  or-#f/c
 ))
 (require (only-in "utils.rkt"
   random-between
