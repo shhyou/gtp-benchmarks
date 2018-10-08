@@ -10,12 +10,13 @@
 (require
  racket/match
  racket/class
- (only-in racket/string string-join)
+ (only-in racket/string string-join string-split)
  (for-syntax racket/base racket/syntax syntax/parse)
  racket/contract
  "../../../ctcs/precision-config.rkt"
  (only-in racket/function curry)
- (only-in "../../../ctcs/common.rkt" class/c*)
+ (only-in racket/list empty? first rest)
+ (only-in "../../../ctcs/common.rkt" class/c* or-#f/c)
 )
 (require (only-in "stack.rkt"
   stack-drop
@@ -35,21 +36,21 @@
 ;; =============================================================================
 ;; -- Commands
 
-(define env? (listof command%?))
-(define ((env-with/c cmd-ids) env)
-  (cond [(env? env)
-         (define env-cmd-ids
-           (for/list ([env-cmd (in-list env)])
-             (get-field id env-cmd)))
-         (for/and ([c (in-list cmd-ids)])
-           (member c env-cmd-ids))]
-        [else #f]))
-
 (define command%/c
-  (class/c* (field/all [id symbol?]
-                       [descr string?]
-                       [exec (env? stack? v? . -> . (or-#f/c
-                                                     (cons/c env? stack?)))])))
+  (class/c*
+   (field/all
+    [id symbol?]
+    [descr string?]
+    [exec ((listof
+            (instanceof/c
+             (recursive-contract command%/c)))
+           stack?
+           any/c
+           . -> .
+           (or-#f/c (cons/c (listof
+                             (instanceof/c
+                              (recursive-contract command%/c)))
+                            stack?)))])))
 
 (define command%? (instanceof/c command%/c))
 
@@ -61,6 +62,16 @@
       id
       descr
       exec)))
+
+(define env? (listof command%?))
+(define ((env-with/c cmd-ids) env)
+  (cond [(env? env)
+         (define env-cmd-ids
+           (for/list ([env-cmd (in-list env)])
+             (get-field id env-cmd)))
+         (for/and ([c (in-list cmd-ids)])
+           (member c env-cmd-ids))]
+        [else #f]))
 
 ;; True if the argument is a list with one element
 (define/contract (singleton-list? x)
@@ -162,7 +173,7 @@
                        "Duplicate the top item of the stack")
    (make-stack-command over
                        "Duplicate the top item of the stack, but place the duplicate in the third position of the stack.")
-   (make-stack-command swap 
+   (make-stack-command swap
                        "Swap the first two numbers on the stack")
    (new command%
         (id 'push)
