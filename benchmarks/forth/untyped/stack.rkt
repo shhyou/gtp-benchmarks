@@ -48,6 +48,8 @@
   stack-swap
   ;; (-> x::y::xs y::x::xs)
   ;; Swap the positions of the first 2 items on the stack.
+
+  stack?
 )
 
 ;; =============================================================================
