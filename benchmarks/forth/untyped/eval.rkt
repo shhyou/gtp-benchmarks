@@ -8,6 +8,18 @@
   racket/match
   racket/class
   (only-in racket/port with-input-from-string)
+  racket/contract
+  "../../../ctcs/precision-config.rkt"
+  (only-in "../../../ctcs/common.rkt"
+           command%?-with-exec
+           command%?
+           stack?
+           env?
+           equal?/c
+           or-#f/c)
+  (only-in racket/function
+           curry)
+  (only-in racket/list first)
 )
 (require (only-in "command.rkt"
   CMD*
@@ -17,13 +29,28 @@
   stack-init
 ))
 
-(define (assert v p)
+(define/contract (assert v p)
+  (configurable-ctc
+   [max (parametric->/c [A] (A (A . -> . boolean?) . -> . A))]
+   [types (any/c (any/c . -> . boolean?) . -> . any/c)])
+
   (unless (p v) (error 'assert))
   v)
 
 ;; =============================================================================
 
-(define defn-command
+(define/contract defn-command
+  (configurable-ctc
+   [max (command%?-with-exec
+         (args E S v)
+         [result (match v
+                   [(cons (or ': 'define)
+                          (cons w defn*-any))
+                    (cons/c (cons/c command%? (equal?/c E))
+                            (equal?/c S))]
+                   [_ #f])])]
+   [types command%?])
+
   (new command%
     (id 'define)
     (descr "Define a new command as a sequence of existing commands")
@@ -51,7 +78,12 @@
         (cons (cons cmd E) S)]
        [_ #f])))))
 
-(define (forth-eval* lines)
+(define/contract (forth-eval* lines)
+  (configurable-ctc
+   ;; lltodo: not sure if this can (reasonably) be more precise?
+   [max ((listof string?) . -> . (values env? stack?))]
+   [types ((listof string?) . -> . (values env? stack?))])
+
   (for/fold
             ([e (cons defn-command CMD*)]
              [s (stack-init)])
@@ -64,9 +96,35 @@
      [else
       (forth-eval e s token*)])))
 
-(define (forth-eval E S token*)
+
+(define ((listof/any-depth/c ctc) v)
+  (if (list? v)
+      (andmap (listof/any-depth/c ctc) v)
+      (ctc v)))
+
+(define token*? (listof/any-depth/c (or/c symbol? number?)))
+
+(define/contract (forth-eval E S token*)
+  (configurable-ctc
+   [max (->i ([E env?]
+              [S stack?]
+              [token* token*?])
+             ;; ll: as precise as it can get without copying the body exactly
+             (values
+              [env-result (E)
+                          (or/c (or/c #f (equal?/c E))
+                                env?)]
+              [stack-result (S)
+                            (or/c (equal?/c S)
+                                  stack?)]))]
+   [types (env? stack? token*? . -> . (values (or-#f/c env?) stack?))])
+
+  ;; Iterates over every cmd in the env trying each one by one until
+  ;; one returns a truthy value
+  ;; Thus why cmds return #f for invalid input
   (match (for/or
-                 ([c (in-list E)]) ((get-field exec c) E S token*))
+             ([c (in-list E)])
+           ((get-field exec c) E S token*))
     ['EXIT
      (values #f S)]
     [#f
@@ -75,7 +133,16 @@
     [(? pair? E+S)
      (values (car E+S) (cdr E+S))]))
 
-(define (forth-tokenize str)
+(define/contract (forth-tokenize str)
+  (configurable-ctc
+   [max (->i ([str string?])
+             [result (str) (equal?/c
+                            (de-nest
+                             (read
+                              (open-input-string
+                               (string-append "(" str ")")))))])]
+   [types (string? . -> . token*?)])
+
   (parameterize ([read-case-sensitive #f]) ;; Converts symbols to lowercase
     (with-input-from-string str
       (lambda ()
@@ -85,8 +152,19 @@
              [(? eof-object?) '()]
              [val (cons val (loop))])))))))
 
+
+(define (nested-singleton-list? v)
+  (and (list? v)
+       (= (length v) 1)
+       (list? (first v))))
+
 ;; Remove all parentheses around a singleton list
-(define (de-nest v*)
+(define/contract (de-nest v*)
+  (configurable-ctc
+   [max (->i ([v* (listof/any-depth/c token*?)])
+             [result (not/c nested-singleton-list?)])]
+   [types ((or/c list? symbol?) . -> . (or/c list? symbol?))])
+
   (if (and (list? v*)
            (not (null? v*))
            (list? (car v*))
