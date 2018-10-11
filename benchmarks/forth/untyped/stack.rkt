@@ -3,7 +3,11 @@
 (require racket/contract
          racket/list
          "../../../ctcs/precision-config.rkt"
-         (only-in racket/function curry))
+         (only-in racket/function curry)
+         (only-in "../../../ctcs/common.rkt"
+                  stack?
+                  list-with-min-size/c
+                  equal?/c))
 
 ;; TODO make stacks be objects ?
 
@@ -48,24 +52,19 @@
   stack-swap
   ;; (-> x::y::xs y::x::xs)
   ;; Swap the positions of the first 2 items on the stack.
-
-  stack?
 )
 
 ;; =============================================================================
 
 (define stackof listof)
-(define stack? list?)
 (define non-empty-stack? (and/c stack?
                                 (not/c empty?)))
-(define ((stack-with-min-size/c n) S)
-  (and (stack? S)
-       (>= (length S) n)))
+(define stack-with-min-size/c list-with-min-size/c)
 
 (define/contract (list->stack xs)
   (configurable-ctc
    [max (->i ([xs list?])
-             [result (xs) (curry equal? xs)])]
+             [result (xs) (equal?/c xs)])]
    [types (list? . -> . stack?)])
 
   (for/fold ([S (stack-init)])
@@ -75,7 +74,7 @@
 (define/contract (stack-drop S)
   (configurable-ctc
    [max (->i ([S non-empty-stack?])
-             [result (S) (rest S)])]
+             [result (S) (equal?/c (rest S))])]
    [types (stack? . -> . stack?)])
 
   (let-values ([(_v S+) (stack-pop S)])
@@ -84,7 +83,7 @@
 (define/contract (stack-dup S)
   (configurable-ctc
    [max (->i ([S non-empty-stack?])
-             [result (S) (cons (first S) S)])]
+             [result (S) (equal?/c (cons (first S) S))])]
    [types (stack? . -> . stack?)])
 
   (let-values ([(v S+) (stack-pop S)])
@@ -101,10 +100,11 @@
   (configurable-ctc
    [max (->i ([S (stack-with-min-size/c 2)])
              [result (S)
-                     (cons (first S)
-                           (cons (second S)
-                                 (cons (first S)
-                                       (rest (rest S)))))])]
+                     (equal?/c
+                      (cons (first S)
+                            (cons (second S)
+                                  (cons (first S)
+                                        (rest (rest S))))))])]
    [types (stack? . -> . stack?)])
 
   (let*-values ([(v1 S1) (stack-pop S)]
@@ -114,11 +114,9 @@
 (define/contract (stack-pop S)
   (configurable-ctc
    [max (->i ([S stack?])
-             [result (S)
-                     (if (empty? S)
-                         (void)
-                         (values (first S)
-                                 (rest S)))])]
+             (values
+              [first-result (S) (equal?/c (first S))]
+              [second-result (S) (equal?/c (rest S))]))]
    [types (stack? . -> . (values any/c stack?))])
 
   (if (null? S)
@@ -130,7 +128,7 @@
    [max (->i ([S stack?]
               [v any/c])
              [result (S v)
-                     (cons v S)])]
+                     (equal?/c (cons v S))])]
    [types (stack? any/c . -> . stack?)])
 
   (cons v S))
@@ -139,9 +137,10 @@
   (configurable-ctc
    [max (->i ([S (stack-with-min-size/c 2)])
              [result (S)
-                     (cons (second S)
-                           (cons (first S)
-                                 (rest (rest S))))])]
+                     (equal?/c
+                      (cons (second S)
+                            (cons (first S)
+                                  (rest (rest S)))))])]
    [types (stack? . -> . stack?)])
 
   (let*-values ([(v1 S1) (stack-pop S)]

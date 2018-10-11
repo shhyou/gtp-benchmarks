@@ -16,7 +16,16 @@
  "../../../ctcs/precision-config.rkt"
  (only-in racket/function curry)
  (only-in racket/list empty? first second rest)
- (only-in "../../../ctcs/common.rkt" class/c* or-#f/c)
+ (only-in "../../../ctcs/common.rkt"
+          class/c*
+          or-#f/c
+          command%/c
+          command%?
+          command%?-with-exec
+          stack?
+          env?
+          list-with-min-size/c
+          equal?/c)
 )
 (require (only-in "stack.rkt"
   stack-drop
@@ -26,7 +35,6 @@
   stack-pop
   stack-push
   stack-swap
-  stack?
 ))
 
 (define (assert v p)
@@ -35,28 +43,6 @@
 
 ;; =============================================================================
 ;; -- Commands
-
-;; lltodo can these command% ctcs be any more precise?
-;; Yes: by incorporating knowledge about the behavior of exec for each
-;; command.
-
-(define command%/c
-  (class/c*
-   (field/all
-    [id symbol?]
-    [descr string?]
-    [exec ((listof
-            (instanceof/c
-             (recursive-contract command%/c)))
-           stack?
-           any/c
-           . -> .
-           (or-#f/c (cons/c (listof
-                             (instanceof/c
-                              (recursive-contract command%/c)))
-                            stack?)))])))
-
-(define command%? (instanceof/c command%/c))
 
 (define/contract command%
   command%/c
@@ -67,7 +53,6 @@
       descr
       exec)))
 
-(define env? (listof command%?))
 (define ((env-with/c cmd-ids) env)
   (cond [(env? env)
          (define env-cmd-ids
@@ -77,32 +62,6 @@
            (member c env-cmd-ids))]
         [else #f]))
 
-
-(require (for-syntax syntax/parse))
-(define-syntax (command%/c-with-exec stx)
-  (syntax-parse stx
-    #:datum-literals (args type result)
-    [(_ (~optional (type command%-c-type))
-        (args env-name stack-name val-name)
-        [result result-ctc]
-        (~optional (~seq (~datum #:post) post-condition)))
-     #`(and/c (instanceof/c
-               #,(if (attribute command%-c-type)
-                     #'command%-c-type
-                     #'command%/c))
-              (instanceof/c
-               (class/c*
-                (field/all
-                 [exec (->i ([env-name env?]
-                             [stack-name stack?]
-                             [val-name any/c])
-                            [result (env-name stack-name val-name)
-                                    result-ctc]
-                            #,@(if (attribute post-condition)
-                                   #'(#:post
-                                      (env-name stack-name val-name)
-                                      post-condition)
-                                   #'()))]))))]))
 
 
 ;; True if the argument is a list with one element
@@ -129,17 +88,22 @@
                     [binop symbol?]
                     [exec any/c #|Same as command%/c|#]))))
 
+(require (for-syntax syntax/parse))
 (define-syntax (binop-command%/c-for stx)
   (syntax-parse stx
     [(_ binop)
-     #'(command%/c-with-exec
+     #'(command%?-with-exec
         (type binop-command%/c)
         (args E S v)
         [result
          (or-#f/c
-          (cons E
-                (cons (binop (second S) (first S))
-                      (rest (rest S)))))])]))
+          ;; lltodo: example of bad error reporting: add extra parens
+          (if ((list-with-min-size/c 2) S)
+              (equal?/c
+               (cons E
+                     (cons (binop (second S) (first S))
+                           (rest (rest S)))))
+              #f))])]))
 
 (define/contract binop-command%
   (configurable-ctc
@@ -152,13 +116,13 @@
     (super-new
       (id (assert (object-name binop) symbol?))
       (exec (lambda (E S v)
-        (if (singleton-list? v)
-          (if (eq? (car v) (get-field id this))
-             (let*-values ([(v1 S1) (stack-pop S)]
-                           [(v2 S2) (stack-pop S1)])
-               (cons E (stack-push S2 (binop v2 v1))))
-             #f)
-           #f))))))
+              (if (singleton-list? v)
+                  (if (eq? (car v) (get-field id this))
+                      (let*-values ([(v1 S1) (stack-pop S)]
+                                    [(v2 S2) (stack-pop S1)])
+                        (cons E (stack-push S2 (binop v2 v1))))
+                      #f)
+                  #f))))))
 
 ;; Turns a symbol into a stack command parser
 (define-syntax make-stack-command
@@ -186,17 +150,17 @@
    [max (and/c env?
                (list/c
                 ;; exit
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
                  [result (if (or (eof-object? v)
                                  (is-or-starts-with? exit? v))
                              'EXIT
                              #f)])
                 ;; help
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
                  [result (if (is-or-starts-with? help? v)
-                             (cons E S)
+                             (equal?/c (cons E S))
                              #f)])
 
                 (binop-command%/c-for +)
@@ -204,41 +168,47 @@
                 (binop-command%/c-for *)
 
                 ;; drop
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
-                 [result (if (is-or-starts-with? (curry equal? 'stack-drop)
-                                                 v)
-                             (cons E (rest S))
+                 [result (if (and (is-or-starts-with? (curry equal? 'drop)
+                                                      v)
+                                  ((list-with-min-size/c 1) S))
+                             (equal?/c (cons E (rest S)))
                              #f)])
                 ;; dup
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
-                 [result (if (is-or-starts-with? (curry equal? 'stack-dup)
-                                                 v)
-                             (cons E (cons (first S) S))
+                 [result (if (and (is-or-starts-with? (curry equal? 'dup)
+                                                      v)
+                                  ((list-with-min-size/c 1) S))
+                             (equal?/c (cons E (cons (first S) S)))
                              #f)])
                 ;; over
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
-                 [result (if (is-or-starts-with? (curry equal? 'stack-over)
-                                                 v)
-                             (cons E (cons (first S)
-                                           (cons (second S)
-                                                 (cons (first S)
-                                                       (rest (rest S))))))
+                 [result (if (and (is-or-starts-with? (curry equal? 'over)
+                                                      v)
+                                  ((list-with-min-size/c 2) S))
+                             (equal?/c
+                              (cons E (cons (first S)
+                                            (cons (second S)
+                                                  (cons (first S)
+                                                        (rest (rest S)))))))
                              #f)])
                 ;; swap
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
-                 [result (if (is-or-starts-with? (curry equal? 'stack-swap)
-                                                 v)
-                             (cons E
-                                   (cons (second S)
-                                         (cons (first S)
-                                               (rest (rest S)))))
+                 [result (if (and (is-or-starts-with? (curry equal? 'swap)
+                                                      v)
+                                  (singleton-list? v))
+                             (equal?/c
+                              (cons E
+                                    (cons (second S)
+                                          (cons (first S)
+                                                (rest (rest S))))))
                              #f)])
                 ;; push
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
                  [result (if (or (and (list? v)
                                       (>= (length v) 1)
@@ -247,18 +217,19 @@
                                       (>= (length v) 2)
                                       (equal? (first v) 'push)
                                       (exact-integer? (second v))))
-                             (cons E
-                                   (cons (if (exact-integer? (first v))
-                                             (first v)
-                                             (second v))
-                                         S))
+                             (equal?/c
+                              (cons E
+                                    (cons (if (exact-integer? (first v))
+                                              (first v)
+                                              (second v))
+                                          S)))
                              #f)])
                 ;; show
                 ;; lltemporal: prints
-                (command%/c-with-exec
+                (command%?-with-exec
                  (args E S v)
                  [result (if (is-or-starts-with? (curry equal? 'show))
-                             (cons E S)
+                             (equal?/c (cons E S))
                              #f)])))]
    [types env?])
 
