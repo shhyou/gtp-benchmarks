@@ -82,8 +82,6 @@
 ;;  the identifier is then applied to the top 2 numbers on the stack.
 (define binop-command%/c
   (and/c command%/c
-         ;; lltodo this may be wrong: not sure if field spec disallows
-         ;; other fields from being present (like binop)
          (class/c* (field/all
                     [binop symbol?]
                     [exec any/c #|Same as command%/c|#]))))

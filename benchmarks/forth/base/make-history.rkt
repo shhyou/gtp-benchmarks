@@ -11,7 +11,6 @@
 (define other* '(dup drop over swap))
 (define new* (box '()))
 
-;; lltodo: parametric?
 (define/contract (random-ref xs)
   (configurable-ctc
    [max (->i ([xs (listof any/c)])
