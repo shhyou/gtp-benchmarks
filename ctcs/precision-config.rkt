@@ -113,5 +113,18 @@
     [(_ (values c ...)) #'(values (wrap/c c ...))]
     [(_ s) #'(wrap s)]))
 
-(define (wrap flat-ctc)
-  (λ (x) (flat-ctc x)))
+;; If it's not a flat contract, then
+;; applying higher order ctcs to a value will produce a contract-wrapped value.
+;; We may not want to mess with these, because the only thing that checks actual
+;; values is flat contracts.
+;; Except these contracts do check if they're given a value of the right shape
+;; immediately.
+
+;; So we should replace higher order contracts with a function that
+;; first checks if the given value is tainted, and if so pushes the
+;; contract down into the taint wrapper, and if not is just the normal
+;; contract.
+(define (wrap ctc)
+  (if (flat-contract? ctc)
+      (λ (x) (ctc (tainted-value* x)))
+      (curry tainted-map ctc)))
