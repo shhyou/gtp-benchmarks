@@ -13,6 +13,16 @@
 ;; Must be a member of ^; modify to change all configurable-ctc precision levels
 (define-for-syntax current-precision-config 'max)
 
+;; Usage:
+;; (configurable-ctc [<unquoted-precision-config> contract?] ...)
+;;
+;; No need to specify the 'none case: any unspecified cases will
+;; become any/c when that configuration is used.
+;;
+;; Example:
+;; (define/contract (f x)
+;;   (configurable-ctc [max (-> number? string?)]
+;;                     [types procedure?]))
 (define-syntax (configurable-ctc stx)
   (syntax-parse stx
     [(_ [level ctc] ...)
@@ -30,13 +40,78 @@
          (with-syntax ([ctc-for-current-level current-ctc-stx])
            (syntax/loc current-ctc-stx
              ctc-for-current-level))))]))
-;; Usage:
-;; (configurable-ctc [<unquoted-precision-config> contract?] ...)
-;;
-;; No need to specify the 'none case: any unspecified cases will
-;; become any/c when that configuration is used.
-;;
-;; Example:
-;; (define/contract (f x)
-;;   (configurable-ctc [max (-> number? string?)]
-;;                     [types procedure?]))
+
+
+
+(define-syntax (c-> stx)
+  (syntax-parse stx
+    #:datum-literals (any values)
+    [(_ (~or (~seq mandatory-kw:keyword mandatory-kw-dom)
+              mandatory-dom:expr)
+        ... rng)
+     #'(-> (wrap/c mandatory-dom)
+           ...
+           (~@ mandatory-kw (wrap/c mandatory-kw-dom))
+           ...
+           (wrap/c rng))]))
+
+(define-syntax (c->* stx)
+  (syntax-parse stx
+    #:datum-literals (any values)
+    [(_ ((~or (~seq mandatory-kw:keyword mandatory-kw-dom)
+              mandatory-dom:expr)
+         ...)
+        ((~or (~seq optional-kw:keyword optional-kw-dom)
+              optional-dom:expr)
+         ...)
+        (~optional (~seq (~datum #:pre) pre-cond))
+        rng
+        (~optional (~seq (~datum #:post) post-cond)))
+     #'(->* ((wrap/c mandatory-dom)
+             ...
+             (~@ mandatory-kw (wrap/c mandatory-kw-dom))
+             ...)
+            ((wrap/c optional-dom)
+             ...
+             (~@ optional-kw (wrap/c optional-kw-dom))
+             ...)
+            (~? (~@ #:pre pre-cond))
+            (wrap/c rng)
+            (~? (~@ #:post post-cond)))]))
+
+(define-syntax (c->i stx)
+  (define-syntax-class dependent-rng
+    #:description "dependent-range"
+    (pattern [result:id (~optional (result-arg:id ...))
+                        result-ctc:expr]))
+  (syntax-parse stx
+    #:datum-literals (any values)
+    [(_ ([param:id (~optional (param-arg:id ...)) param-ctc:expr] ...)
+        (~optional (~seq (~datum #:pre)
+                         (pre-arg:id ...)
+                         pre-cond:expr))
+        (~or rng:dependent-rng
+             (values values-rng:dependent-rng ...))
+        (~optional (~seq (~datum #:post)
+                         (post-arg:id ...)
+                         post-cond:expr)))
+     #'(->i ([param (~? (param-arg ...)) (wrap/c param-ctc)] ...)
+            (~? (~@ #:pre (pre-arg ...) pre-cond))
+            (~? [rng.result (~? ((~@ rng.result-arg ...)))
+                            (wrap/c rng.result-ctc)])
+            (~? (values [values-rng.result (~? ((~@ values-rng.result-arg ...)))
+                                           (wrap/c values-rng.result-ctc)] ...))
+            (~? (~@ #:post (post-arg ...) post-cond)))]))
+
+;; lltodo: note that the above doesn't work when `values` range
+;; contracts don't refer to arguments. (???)
+
+(define-syntax (wrap/c stx)
+  (syntax-parse stx
+    #:datum-literals (any values)
+    [(_ any) #'any]
+    [(_ (values c ...)) #'(values (wrap/c c ...))]
+    [(_ s) #'(wrap s)]))
+
+(define (wrap flat-ctc)
+  (λ (x) (flat-ctc x)))
