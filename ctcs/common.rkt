@@ -64,10 +64,8 @@
         (args env-name stack-name val-name)
         [result result-ctc]
         (~optional (~seq (~datum #:post) post-condition)))
-     #`(and/c (instanceof/c
-               #,(if (attribute command%-c-type)
-                     #'command%-c-type
-                     #'command%/c))
+     #'(and/c (instanceof/c
+               (~? command%-c-type command%/c))
               (instanceof/c
                (class/c*
                 (field/all
@@ -76,11 +74,9 @@
                              [val-name any/c])
                             [result (env-name stack-name val-name)
                                     result-ctc]
-                            #,@(if (attribute post-condition)
-                                   #'(#:post
-                                      (env-name stack-name val-name)
-                                      post-condition)
-                                   #'()))]))))]))
+                            (~? (~@ #:post
+                                    (env-name stack-name val-name)
+                                    post-condition)))]))))]))
 
 (define ((list-with-min-size/c n) S)
   (and (list? S)
