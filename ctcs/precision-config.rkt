@@ -5,7 +5,8 @@
                      racket/base
                      (only-in racket/function
                               curryr))
-         racket/contract)
+         racket/contract
+         (only-in racket/function curry))
 
 (provide configurable-ctc)
 
@@ -128,3 +129,70 @@
   (if (flat-contract? ctc)
       (λ (x) (ctc (tainted-value* x)))
       (curry tainted-map ctc)))
+
+
+(struct tainted (value taints) #:transparent)
+(define (tainted-map f x)
+  (if (tainted? x)
+      (struct-copy tainted x [value (f (tainted-value x))])
+      (f x)))
+(define (tainted-value* x)
+  (if (tainted? x) (tainted-value x) x))
+
+;; tainted-bind: (A -> Tainted(B)) Tainted(A) -> Tainted(B)
+;; Note: doesn't do any kind of tain preservation or anything
+(define (tainted-bind f x)
+  (tainted-value* (tainted-map f x)))
+
+(module+ test
+  (require rackunit)
+  (define x (tainted 2 '(a b c)))
+
+  (define-syntax-rule (assert e)
+    (unless e (error 'assert "~a failed" 'e)))
+
+  (assert (not (integer? x)))
+  (assert ((wrap integer?) x))
+  (assert ((wrap/c integer?) x))
+  (define/contract x2 (wrap/c integer?) x)
+  ;; wiw try functions
+  (define/contract (foo1 x)
+    (c-> integer? integer?)
+    ;; simulate builtins that work on tainted values
+    (tainted-map (curry + 2) x))
+  (assert (foo1 x))
+
+  (define/contract (foo2 x [y 2])
+    (c->* (integer?) (integer?)
+          integer?)
+    ;; simulate builtins that work on tainted values
+    (tainted-map (curry + y) x))
+  (assert (foo2 x))
+
+  (define/contract (foo3 x y)
+    (c->i ([x integer?]
+           [y integer?])
+          [result integer?])
+    ;; simulate builtins that work on tainted values
+    (tainted-map (curry + y) x))
+  (assert (foo3 x 2))
+
+  (define/contract (foo4 x y)
+    (c->i ([x integer?]
+           [y (x) (and/c integer?
+                         ;; lltodo: error: expects real but got
+                         ;; tainted value... Need to have these bound
+                         ;; value references be unwrapped for their
+                         ;; usage in dependent contracts
+                         (<=/c x))])
+          [result (x y)
+                  ;; simulate for x
+                  (curry equal?
+                         (tainted-bind (λ (x-val)
+                                         (tainted-map (curry + x-val) y))
+                                       x))])
+    ;; simulate builtins that work on tainted values
+    (tainted-map (curry + y) x))
+  (assert (foo4 x x))
+
+  )
