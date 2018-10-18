@@ -80,28 +80,52 @@
             (wrap/c rng)
             (~? (~@ #:post post-cond)))]))
 
+
+
 (define-syntax (c->i stx)
-  (define-syntax-class dependent-rng
-    #:description "dependent-range"
-    (pattern [result:id (~optional (result-arg:id ...))
-                        result-ctc:expr]))
+  (define-syntax-class dependencies
+    #:description "dependent-dependencies"
+    (pattern (depend-id:id ...)
+             #:with
+             untainted-shadow-bindings
+             #'([depend-id (tainted-value* depend-id)] ...)))
+  (define-syntax-class dependent-arg
+    #:description "dependent-argument"
+    (pattern [param:id (~optional depends:dependencies) param-ctc:expr]
+             #:with
+             expansion
+             #'[param (~? (depends.depend-id ...))
+                      ;; Shadow depend bindings with untainted
+                      ;; versions of the binding
+                      (let (~? (~@ depends.untainted-shadow-bindings)
+                               ())
+                        (wrap/c param-ctc))]))
+  (define-syntax-class single-dependent-rng
+    #:description "single-dependent-range"
+    (pattern [result:id (~optional depends:dependencies) result-ctc:expr]
+             #:with
+             expansion
+             #'[result (~? (depends.depend-id ...))
+                       ;; Same shadowing as `dependent-arg`
+                       (let (~? (~@ depends.untainted-shadow-bindings)
+                                ())
+                         (wrap/c result-ctc))]))
+
   (syntax-parse stx
     #:datum-literals (any values)
-    [(_ ([param:id (~optional (param-arg:id ...)) param-ctc:expr] ...)
+    [(_ (arg:dependent-arg ...)
         (~optional (~seq (~datum #:pre)
                          (pre-arg:id ...)
                          pre-cond:expr))
-        (~or rng:dependent-rng
-             (values values-rng:dependent-rng ...))
+        (~or single-rng:single-dependent-rng
+             (values values-rng:single-dependent-rng ...))
         (~optional (~seq (~datum #:post)
                          (post-arg:id ...)
                          post-cond:expr)))
-     #'(->i ([param (~? (param-arg ...)) (wrap/c param-ctc)] ...)
+     #'(->i (arg.expansion ...)
             (~? (~@ #:pre (pre-arg ...) pre-cond))
-            (~? [rng.result (~? ((~@ rng.result-arg ...)))
-                            (wrap/c rng.result-ctc)])
-            (~? (values [values-rng.result (~? ((~@ values-rng.result-arg ...)))
-                                           (wrap/c values-rng.result-ctc)] ...))
+            (~? single-rng.expansion)
+            (~? (values values-rng.expansion ...))
             (~? (~@ #:post (post-arg ...) post-cond)))]))
 
 ;; lltodo: note that the above doesn't work when `values` range
@@ -179,20 +203,26 @@
 
   (define/contract (foo4 x y)
     (c->i ([x integer?]
-           [y (x) (and/c integer?
-                         ;; lltodo: error: expects real but got
-                         ;; tainted value... Need to have these bound
-                         ;; value references be unwrapped for their
-                         ;; usage in dependent contracts
-                         (<=/c x))])
+           [y (x) (and/c integer? (<=/c x))])
           [result (x y)
-                  ;; simulate for x
-                  (curry equal?
-                         (tainted-bind (λ (x-val)
-                                         (tainted-map (curry + x-val) y))
-                                       x))])
+                  (curry equal? (+ x y))])
     ;; simulate builtins that work on tainted values
-    (tainted-map (curry + y) x))
+    (tainted-bind (λ (x-val)
+                    (tainted-map (curry + x-val) y))
+                  x))
   (assert (foo4 x x))
 
-  )
+  ;; wiw: lltodo: noticed an issue: wrap/c assumes all values its
+  ;; given are contracts, not values. So it needs to do the
+  ;; value->self-recognizing-contract conversion.
+  (define/contract (foo5 x y)
+    (c->i ([x integer?]
+           [y (x) (and/c integer? (<=/c x))])
+          [result (x y)
+                  (+ x y)])
+    ;; simulate builtins that work on tainted values
+    (tainted-bind (λ (x-val)
+                    (tainted-map (curry + x-val) y))
+                  x))
+  (assert (foo5 x x)))
+
