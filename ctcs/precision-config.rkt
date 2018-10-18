@@ -6,7 +6,8 @@
                      (only-in racket/function
                               curryr))
          racket/contract
-         (only-in racket/function curry))
+         (only-in racket/function curry)
+         (only-in racket/match match))
 
 (provide configurable-ctc)
 
@@ -44,6 +45,7 @@
 
 
 
+;; -------------------- taint wrappers --------------------
 (define-syntax (c-> stx)
   (syntax-parse stx
     #:datum-literals (any values)
@@ -144,15 +146,40 @@
 ;; values is flat contracts.
 ;; Except these contracts do check if they're given a value of the right shape
 ;; immediately.
-
 ;; So we should replace higher order contracts with a function that
 ;; first checks if the given value is tainted, and if so pushes the
 ;; contract down into the taint wrapper, and if not is just the normal
 ;; contract.
+;; Self-recognizing value contracts need to be made into functions
+;; that check for equality after unwrapping the taint.
 (define (wrap ctc)
-  (if (flat-contract? ctc)
-      (λ (x) (ctc (tainted-value* x)))
-      (curry tainted-map ctc)))
+  (match ctc
+    ;; Self-recognizing value contracts
+    [(? (or/c symbol?
+              boolean?
+              keyword?
+              null?))
+     (make-recognizer/c eq? ctc)]
+    [(or (? (or/c string? bytes? char?))
+         +nan.0 +nan.f)
+     (make-recognizer/c equal? ctc)]
+    [(? number?)
+     (make-recognizer/c = ctc)]
+    [(? regexp?)
+     (make-recognizer/c regexp-match? ctc)]
+
+    ;; Flat contracts
+    [(? flat-contract?)
+     (λ (x) (ctc (tainted-value* x)))]
+
+    ;; Higher order contracts
+    [else
+     ;; push the higher order contract down into the taint wrapper
+     ;; Since a higher order contract will return the contracted value
+     (λ (x) (tainted-map ctc x))]))
+
+(define ((make-recognizer/c recognizer v) x)
+  (recognizer v (tainted-value* x)))
 
 
 (struct tainted (value taints) #:transparent)
@@ -179,7 +206,7 @@
   (assert ((wrap integer?) x))
   (assert ((wrap/c integer?) x))
   (define/contract x2 (wrap/c integer?) x)
-  ;; wiw try functions
+
   (define/contract (foo1 x)
     (c-> integer? integer?)
     ;; simulate builtins that work on tainted values
@@ -212,9 +239,6 @@
                   x))
   (assert (foo4 x x))
 
-  ;; wiw: lltodo: noticed an issue: wrap/c assumes all values its
-  ;; given are contracts, not values. So it needs to do the
-  ;; value->self-recognizing-contract conversion.
   (define/contract (foo5 x y)
     (c->i ([x integer?]
            [y (x) (and/c integer? (<=/c x))])
