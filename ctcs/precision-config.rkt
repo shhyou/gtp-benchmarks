@@ -239,6 +239,7 @@
                   x))
   (assert (foo4 x x))
 
+  ;; Check literal value ctcs
   (define/contract (foo5 x y)
     (c->i ([x integer?]
            [y (x) (and/c integer? (<=/c x))])
