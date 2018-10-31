@@ -2,15 +2,15 @@
 
 (provide mutate-program)
 
-(require (for-syntax syntax/parse
-                     racket/match))
+(require (for-syntax syntax/parse)
+         syntax/parse
+         racket/match)
 
-(define-for-syntax make-mutants #t)
-(define-for-syntax mutation-index 0)
+(define make-mutants #t)
+(define mutation-index 0)
 
-(begin-for-syntax
-  (unless (>= mutation-index 0)
-    (error "mutation-index must be positive")))
+(unless (>= mutation-index 0)
+  (error "mutation-index must be positive"))
 
 (define-syntax (define-mutators stx)
   (syntax-parse stx
@@ -19,7 +19,7 @@
         (~or (orig -> mutated)
              (left <-> right)) ...
         other-mutations ...)
-     #'(define-for-syntax (mutator-name s)
+     #'(define (mutator-name s)
          (if make-mutants
              ;; Add invocation syntax around s so that patterns can be
              ;; written like a normal macro
@@ -88,26 +88,27 @@
        [_
         #'value]))])
 
-(define-syntax (mutate-body stx)
+(define (mutate-body stx)
   (if make-mutants
       (syntax-parse stx
         ;; modify class methods
-        [(_ ((~datum class)
-             e ...
-             (~or ((~datum define/public) id+other/pub ...)
-                  ((~datum define/override) id+other/over ...))
-             more-e ...))
+        [((~datum class)
+          e ...
+          (~or ((~datum define/public) id+other/pub ...)
+               ((~datum define/override) id+other/over ...))
+          more-e ...)
          #`(class e ...
              #,(if (attribute id+other/pub)
                    (mutate #'(define/public id+other/pub ...))
                    (mutate #'(define/override id+other/over ...)))
              more-e ...)]
         ;; leave other classes alone
-        [(_ ((~datum class) e ...))
+        [((~datum class) e ...)
          #'(class e ...)]
 
         ;; modify function apps
-        [(_ (fn arg ...))
+        [((~and fn:id (~not (~or (~datum λ)
+                                 (~datum lambda)))) arg ...)
          ;; A function application may not have an applicable mutation
          ;; First, see if it does..
          (let ([mutated (mutate #'(fn arg ...))])
@@ -119,48 +120,322 @@
                mutated))]
 
         ;; anything else, just try mutate
-        [(_ e)
+        [e
          (mutate #'e)])
-      (syntax-parse stx
-        [(_ e)
-         (syntax/loc stx e)])))
+
+      stx))
 
 
-(define-syntax (mutate-program stx)
+;; lltodo: decisions about when to mutate should be on an
+;; expression-by-expression basis, not definitions
+;; Just need to push the mutate? logic down lower, and
+;; have mutate-body and mutate-expr return the new counter
+;; somehow
+(define (mutate-program stx mutation-index [counter 0])
   (if make-mutants
       (syntax-parse stx
         ;; Mutate definition body (could be class, function, other value)
-        [(_ counter
-            ((define/contract id/sig ctc body ...) e ...))
-         (let* ([counter-val (syntax->datum #'counter)]
-                [mutate? (= counter-val mutation-index)])
-           #`(begin (define/contract id/sig ctc
-                      #,@(if mutate?
-                             #'((mutate-body body) ...)
-                             #'(body ...)))
-                    #,@(if mutate?
-                           #'(e ...)
-                           #`((mutate-program #,(add1 counter-val)
-                                              (e ...))))))]
+        [((define/contract id/sig ctc body ...) e ...)
+         (let* ([mutate? (= counter mutation-index)])
+           (if mutate?
+               #`((define/contract id/sig ctc
+                    #,@(map mutate-body (syntax-e #'(body ...))))
+                  e ...)
+               #`((define/contract id/sig ctc
+                    body ...)
+                  #,@(mutate-program #'(e ...)
+                                     mutation-index
+                                     (add1 counter)))))]
 
         ;; Ignore anything else
-        [(_ counter
-            (other-e e ...))
-         #'(begin other-e
-                  (mutate-program counter
-                                  (e ...)))]
-        [(_ counter
-            ())
-         (begin
-           (displayln "Warning: reached maximum mutatable expressions in module")
-           #'(void))]
+        [(other-e e ...)
+         #`(other-e
+            #,@(mutate-program #'(e ...)
+                               mutation-index
+                               counter))]
+        [()
+         ;; signal no more mutations in this module
+         (error 'mutate-program
+                "Mutation index exceeds mutatable forms in module")])
 
-        ;; Initial invocation: add counter
-        [(_ e ...)
-         #'(mutate-program 0 (e ...))])
-      (syntax-parse stx
-        [(_ e ...)
-         (syntax/loc stx (begin e ...))])))
+      stx))
+
+(module+ test
+  (require rackunit)
+
+  (define (programs-equal? a b)
+    (equal? (syntax->datum a)
+            (syntax->datum b)))
+
+  (define-binary-check (check-programs-equal? actual expected)
+    (programs-equal? actual expected))
+
+  #;(define-simple-check (check-mutation index orig-prog new-prog)
+    (programs-equal? (mutate-program orig-prog 0)
+                     new-prog))
+  (define-syntax-rule (check-mutation index orig-prog new-prog)
+    (check-programs-equal? (mutate-program orig-prog index)
+                           new-prog))
+
+  ;; constants
+  (check-mutation
+   0
+   #'{(define/contract a any/c #t)}
+   #'{(define/contract a any/c (not #t))})
+  (check-mutation
+   0
+   #'{(define/contract a any/c #f)}
+   #'{(define/contract a any/c (not #f))})
+
+  (check-mutation
+   0
+   #'{(define/contract a positive? 1)}
+   #'{(define/contract a positive? 0)})
+
+  (check-mutation
+   0
+   #'{(define/contract a positive? -1)}
+   #'{(define/contract a positive? 1)})
+  (check-mutation
+   0
+   #'{(define/contract a positive? 5)}
+   #'{(define/contract a positive? -1)})
+  (check-mutation
+   0
+   #'{(define/contract a positive? 3)}
+   #'{(define/contract a positive? (add1 3))})
+  (check-mutation
+   0
+   #'{(define/contract a positive? 3.5)}
+   #'{(define/contract a positive? (- -1 3.5))})
+  (check-mutation
+   0
+   #'{(define/contract a positive? (λ (x) x))}
+   #'{(define/contract a positive? (λ (x) x))})
+
+  ;; Check adding more exprs and moving index works
+  (check-mutation
+   0
+   #'{(define/contract a positive? 1)
+      (define/contract b positive? 2)}
+   #'{(define/contract a positive? 0)
+      (define/contract b positive? 2)})
+  (check-mutation
+   1
+   #'{(define/contract a positive? 1)
+      (define/contract b positive? 2)}
+   #'{(define/contract a positive? 1)
+      (define/contract b positive? (add1 2))})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        (-> positive? positive?)
+        1)
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        (-> positive? positive?)
+        0)
+      (define/contract b positive? 2)})
+
+  ;; operators
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (< x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (<= x 2))
+      (define/contract b positive? 2)})
+
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (<= x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (< x 2))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (> x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (>= x 2))
+      (define/contract b positive? 2)})
+
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (>= x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (> x 2))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (= x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (=/= x 2))
+      (define/contract b positive? 2)})
+
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (=/= x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (= x 2))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (=/= x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (= x 2))
+      (define/contract b positive? 2)})
+
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (+ x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (- x 2))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (- x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (+ x 2))
+      (define/contract b positive? 2)})
 
 
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (* x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (/ x 2))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (/ x 2))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (* x 2))
+      (define/contract b positive? 2)})
 
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (and x #t))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)})
+  (check-mutation
+   0
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (and x #t))
+      (define/contract b positive? 2)})
+
+  (check-mutation
+   1
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (add1 2))})
+
+  ;; begin
+  (check-mutation
+   1
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 2))})
+
+  ;; if
+  (check-mutation
+   2
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if (not x) 1 2))})
+
+
+  ;; classes
+  (check-mutation
+   0
+   #'{(define/contract c
+        any/c
+        (class (define/public (f x) x)))}
+   #'{(define/contract c
+        any/c
+        (class (define/private (f x) x)))})
+  (check-mutation
+   0
+   #'{(define/contract c
+        any/c
+        (class
+          (define/private (g x) x)
+          (define/override (f x) x)))}
+   #'{(define/contract c
+        any/c
+        (class
+          (define/private (g x) x)
+          (define/augment (f x) x)))}))
