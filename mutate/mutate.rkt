@@ -88,22 +88,8 @@
      [_
       #'value])])
 
-;; lltodo: wiw: refactoring mutate-body and mutate-program
-;; to allow creating multiple mutants from a single expression.
-;; To do so, need to return not only the (possibly mutated) syntax,
-;; but also a new counter indicating if mutation occurred.
-(define-syntax-class method/public-or-override
-  #:description "define/public or /override method"
-  (pattern (~or ((~datum define/public) id+other/pub ...)
-                ((~datum define/override) id+other/over ...))
-           #:with pub #'(~? (define/public id+other/pub ...))
-           #:with over #'(~? (define/override id+other/over ...))))
 
-(define (drop-index lst idx)
-  (append (take lst idx)
-          (take-right lst (- (length lst) idx 1))))
-
-(struct mutated-seq (result new-counter))
+(struct mutated-seq (result new-counter) #:transparent)
 
 (define/contract (mutate-in-sequence stxs mutation-index counter)
   ((listof syntax?) natural? natural? . -> . mutated-seq?)
@@ -115,10 +101,16 @@
   (define stxs-with-mutant
     (if should-mutate?
         (append (take stxs index-to-mutate)
-                (mutate (list-ref stxs index-to-mutate))
+                (list (mutate (list-ref stxs index-to-mutate)))
                 (drop stxs (add1 index-to-mutate)))
         stxs))
   (mutated-seq stxs-with-mutant new-counter))
+
+
+(define-syntax-class method/public-or-override
+  #:description "define/public or /override method"
+  (pattern (~or ((~datum define/public) id+other/pub ...)
+                ((~datum define/override) id+other/over ...))))
 
 ;; mutate-body: stx nat nat -> (values stx <counter val>)
 ;;
@@ -130,13 +122,12 @@
       (syntax-parse stx
         ;; modify class methods
         [((~datum class)
-          e ...
+          (~and (~not _:method/public-or-override)
+                e) ...
           m:method/public-or-override ...
           more-e ...)
-         (define pub-methods (syntax-e #'(m.pub ...)))
-         (define over-methods (syntax-e #'(m.over ...)))
-         (define all-methods (append pub-methods over-methods))
-         (define mutated-methods (mutate-in-sequence all-methods
+         (define methods (syntax-e #'(m ...)))
+         (define mutated-methods (mutate-in-sequence methods
                                                      mutation-index
                                                      counter))
          (values #`(class e ...
@@ -156,19 +147,36 @@
          (define mutated (mutate #'(fn arg ...)))
          (define app-mutation-failed? (equal? (syntax->datum #'(fn arg ...))
                                               (syntax->datum mutated)))
-         (define args (syntax-e #'(arg ...)))
-         (define mutated-args (mutate-in-sequence args mutation-index counter))
-         (if app-mutation-failed?
-             ;; if no applicable mutation, push it down to arguments
-             (values #`(fn #,@(mutated-seq-result mutated-args))
-                     (mutated-seq-new-counter mutated-args))
-             ;; if there was one, stop there
-             (values mutated
-                     (add1 counter)))]
+
+         (cond [(or app-mutation-failed?
+                    (< counter mutation-index))
+                ;; If app-mutation was successful but counter is not
+                ;; yet at mutation-index, we also try mutating the
+                ;; args but record that we skipped mutating the app
+                (define args-muation-counter (if app-mutation-failed?
+                                                 counter
+                                                 (add1 counter)))
+                (define args (syntax-e #'(arg ...)))
+                (define mutated-args (mutate-in-sequence args
+                                                         mutation-index
+                                                         args-muation-counter))
+                (values #`(fn #,@(mutated-seq-result mutated-args))
+                        (mutated-seq-new-counter mutated-args))]
+
+               [(and (not app-mutation-failed?)
+                     (= counter mutation-index))
+                (values mutated
+                        (add1 counter))]
+
+               [else
+                (values stx
+                        (add1 counter))])]
 
         ;; anything else, just try mutate
         [e
-         (values (mutate #'e)
+         (values (if (= counter mutation-index)
+                     (mutate #'e)
+                     #'e)
                  (add1 counter))])
 
       (values stx counter)))
@@ -179,8 +187,8 @@
 
   (define-values (mutated new-counter)
     (for/fold ([mutated-seq/rev '()]
-               [counter-so-far counter])
-              #:result (values (reverse mutated-seq/rev) counter-so-far)
+               [counter-so-far counter]
+               #:result (values (reverse mutated-seq/rev) counter-so-far))
               ([body-stx (in-list stxs)])
       (define-values (mutated-stx new-counter)
         (mutate-body body-stx mutation-index counter-so-far))
@@ -189,11 +197,6 @@
 
   (mutated-seq mutated new-counter))
 
-;; lltodo: decisions about when to mutate should be on an
-;; expression-by-expression basis, not definitions
-;; Just need to push the mutate? logic down lower, and
-;; have mutate-body and mutate-expr return the new counter
-;; somehow
 
 (define-syntax-class contracted-definition
   #:description "define/contract form"
@@ -207,7 +210,9 @@
         ;; Mutate definition body (could be class, function, other value)
         [(def:contracted-definition e ...)
          (define-values (mutated-body-forms)
-           (mutate-body-in-sequence #'(def.body ...)))
+           (mutate-body-in-sequence (syntax-e #'(def.body ...))
+                                    mutation-index
+                                    counter))
          (define-values (mutated-program-rest new-counter)
            (mutate-program #'(e ...)
                            mutation-index
@@ -233,6 +238,7 @@
 
       (values stx counter)))
 
+
 (module+ test
   (require rackunit)
 
@@ -247,8 +253,10 @@
     (programs-equal? (mutate-program orig-prog 0)
                      new-prog))
   (define-syntax-rule (check-mutation index orig-prog new-prog)
-    (check-programs-equal? (mutate-program orig-prog index)
-                           new-prog))
+    (check-programs-equal?
+     (let-values ([(mutated _) (mutate-program orig-prog index)])
+       mutated)
+     new-prog))
 
   ;; constants
   (check-mutation
@@ -449,8 +457,29 @@
         (and x #t))
       (define/contract b positive? 2)})
 
-  (check-mutation
+  ;; Test choices of index
+  (check-mutation ;; tries to mutate `x` but it's a no-op
    1
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)})
+  (check-mutation ;; mutates #t
+   2
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? 2)}
+   #'{(define/contract (f x)
+        any/c
+        (or x (not #t)))
+      (define/contract b positive? 2)})
+  (check-mutation ;; mutates 2
+   3
    #'{(define/contract (f x)
         any/c
         (or x #t))
@@ -462,7 +491,7 @@
 
   ;; begin
   (check-mutation
-   1
+   3
    #'{(define/contract (f x)
         any/c
         (or x #t))
@@ -474,7 +503,7 @@
 
   ;; if
   (check-mutation
-   2
+   6
    #'{(define/contract (f x)
         any/c
         (or x #t))
@@ -489,6 +518,134 @@
       (define/contract (g x)
         any/c
         (if (not x) 1 2))})
+
+
+  ;; Another sequence check on this more complex if program
+  (check-mutation
+   3
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))})
+  (check-mutation
+   4
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 0 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))})
+  (check-mutation
+   5
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 (add1 2)))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))})
+  (check-mutation
+   6
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if (not x) 1 2))})
+  (check-mutation ;; lltodo: tries to mutate `x` but can't
+   7
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))})
+  (check-mutation
+   8
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 0 2))})
+  (check-mutation
+   9
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin 1 2))
+      (define/contract (g x)
+        any/c
+        (if x 1 (add1 2)))})
+
+  ;; Test exception thrown when run out of mutations
+  (check-exn
+   exn:fail?
+   (λ ()
+     (mutate-program #'{(define/contract (f x)
+                          any/c
+                          (or x #t))
+                        (define/contract b positive? (begin 1 2))
+                        (define/contract (g x)
+                          any/c
+                          (if x 1 2))}
+                     10)))
 
 
   ;; classes
@@ -511,4 +668,33 @@
         any/c
         (class
           (define/private (g x) x)
-          (define/augment (f x) x)))}))
+          (define/augment (f x) x)))})
+
+  ;; Test sequencing of class methods
+  (check-mutation
+   0
+   #'{(define/contract c
+        any/c
+        (class
+          (define/override (f x) x)
+          (define/public (g x) x)))}
+   #'{(define/contract c
+        any/c
+        (class
+          (define/augment (f x) x)
+          (define/public (g x) x)))})
+  (check-mutation
+   1
+   #'{(define/contract c
+        any/c
+        (class
+          (define/override (f x) x)
+          (define/public (g x) x)))}
+   #'{(define/contract c
+        any/c
+        (class
+          (define/override (f x) x)
+          (define/private (g x) x)))}))
+
+;; lltodo: no-op mutations still increment the counter
+
