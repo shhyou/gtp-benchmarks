@@ -1,6 +1,15 @@
 #lang racket
 
-(provide mutate-program)
+(provide
+ (contract-out
+  [mutate-program
+   (->i ([stx syntax?]
+         [mutation-index natural?]
+         [counter (mutation-index) (and/c natural?
+                                          (<=/c mutation-index))])
+        ;; note: result may be identical to stx!
+        [result syntax?])]))
+
 
 (require (for-syntax syntax/parse)
          syntax/parse
@@ -15,26 +24,24 @@
 (define-syntax (define-mutators stx)
   (syntax-parse stx
     #:datum-literals (-> <->)
-    [(_ mutator-name
+    [(_ (mutator-name stx-name)
         (~or (orig -> mutated)
              (left <-> right)) ...
         other-mutations ...)
-     #'(define (mutator-name s)
+     #'(define (mutator-name stx-name)
          (if make-mutants
-             ;; Add invocation syntax around s so that patterns can be
-             ;; written like a normal macro
-             (syntax-parse #`(mutator-name #,s)
+             (syntax-parse stx-name
                #:literals (orig ... left ... right ...)
-               [(_ (orig arg (... ...)))
-                #'(mutated arg (... ...))] ...
-               (~@ [(_ (left arg (... ...)))
-                    #'(right arg (... ...))] ...
-                   [(_ (right arg (... ...)))
-                    #'(left arg (... ...))] ...)
+               [(orig arg (... ...))
+                (syntax/loc stx-name (mutated arg (... ...)))] ...
+               (~@ [(left arg (... ...))
+                    (syntax/loc stx-name (right arg (... ...)))] ...
+                   [(right arg (... ...))
+                    (syntax/loc stx-name (left arg (... ...)))] ...)
                other-mutations ...
-               [(_ other)
-                s])
-             s))]))
+               [other
+                stx-name])
+             stx-name))]))
 
 (define/contract (unmutated? orig mutated)
   (syntax? syntax? . -> . boolean?)
@@ -43,7 +50,7 @@
 (define =/= (curry not =))
 
 ;; mutate: stx -> stx
-(define-mutators mutate
+(define-mutators (mutate stx)
   ;; operator mutation
   (< <-> <=)
   (> <-> >=)
@@ -54,12 +61,12 @@
   (modulo -> *)
 
   ;; statement deletion
-  [(_ ((~datum begin) e1 e2 ...+))
-   #'(begin e2 ...)]
+  [((~datum begin) e1 e2 ...+)
+   (syntax/loc stx (begin e2 ...))]
 
   ;; Conditional negation
-  [(_ ((~datum if) test-e then-e else-e))
-   #'(if (not test-e) then-e else-e)]
+  [((~datum if) test-e then-e else-e)
+   (syntax/loc stx (if (not test-e) then-e else-e))]
   ;; ll: Using above instead because seems more interesting
   ;; ;; Conditional removal
   ;; [(_ (if test-e then-e else-e))
@@ -71,26 +78,24 @@
 
   ;; Classes
   ;; access modifier change
-  [(_ ((~datum define/public) id+other ...))
-   #'(define/private id+other ...)]
-  [(_ ((~datum define/override) id+other ...))
-   #'(define/augment id+other ...)]
-  #;[(_ ((~datum super-new)))
+  [((~datum define/public) id+other ...)
+   (syntax/loc stx (define/private id+other ...))]
+  [((~datum define/override) id+other ...)
+   (syntax/loc stx (define/augment id+other ...))]
+  #;[((~datum super-new))
    #'(void)]
 
   ;; constant mutation
-  [(_  (~and value
-             (~not (fn arg ...))))
+  [(~and value
+         (~not (fn arg ...)))
    (match (syntax->datum #'value)
-     [(? boolean?)
-      #'(not value)]
-     [1 #'0]
-     [-1 #'1]
-     [5 #'-1]
-     [(? integer?) #'(add1 value)]
-     [(? number?) #'(- -1 value)]
-     [_
-      #'value])])
+     [(? boolean?)  (syntax/loc stx (not value))]
+     [1             (syntax/loc stx 0)]
+     [-1            (syntax/loc stx 1)]
+     [5             (syntax/loc stx -1)]
+     [(? integer?)  (syntax/loc stx (add1 value))]
+     [(? number?)   (syntax/loc stx (- -1 value))]
+     [_             (syntax/loc stx value)])])
 
 
 (struct mutated-seq (result new-counter) #:transparent)
@@ -130,17 +135,18 @@
                 e) ...
           m:method/public-or-override ...
           more-e ...)
-         (define methods (syntax-e #'(m ...)))
+         (define methods (syntax-e (syntax/loc stx (m ...))))
          (define mutated-methods (mutate-in-sequence methods
                                                      mutation-index
                                                      counter))
-         (values #`(class e ...
-                         #,@(mutated-seq-result mutated-methods)
-                         more-e ...)
+         (values (quasisyntax/loc stx
+                   (class e ...
+                     #,@(mutated-seq-result mutated-methods)
+                     more-e ...))
                  (mutated-seq-new-counter mutated-methods))]
         ;; leave other classes alone
         [((~datum class) e ...)
-         (values #'(class e ...)
+         (values (syntax/loc stx (class e ...))
                  counter)]
 
         ;; modify function apps
@@ -148,7 +154,7 @@
                                  (~datum lambda)))) arg ...)
          ;; A function application may not have an applicable mutation
          ;; First, see if it does..
-         (define mutated (mutate #'(fn arg ...)))
+         (define mutated (mutate (syntax/loc stx (fn arg ...))))
          (define app-mutation-failed? (unmutated? #'(fn arg ...) mutated))
 
          (cond [(or app-mutation-failed?
@@ -159,7 +165,7 @@
                 (define args-muation-counter (if app-mutation-failed?
                                                  counter
                                                  (add1 counter)))
-                (define args (syntax-e #'(arg ...)))
+                (define args (syntax-e (syntax/loc stx (arg ...))))
                 (define mutated-args (mutate-in-sequence args
                                                          mutation-index
                                                          args-muation-counter))
@@ -178,8 +184,8 @@
         ;; anything else, just try mutate
         [e
          (values (if (= counter mutation-index)
-                     (mutate #'e)
-                     #'e)
+                     (mutate (syntax/loc stx e))
+                     stx)
                  (add1 counter))])
 
       (values stx counter)))
@@ -213,26 +219,29 @@
         ;; Mutate definition body (could be class, function, other value)
         [(def:contracted-definition e ...)
          (define-values (mutated-body-forms)
-           (mutate-body-in-sequence (syntax-e #'(def.body ...))
+           (mutate-body-in-sequence (syntax-e (syntax/loc stx
+                                                (def.body ...)))
                                     mutation-index
                                     counter))
          (define-values (mutated-program-rest new-counter)
-           (mutate-program #'(e ...)
+           (mutate-program (syntax/loc stx (e ...))
                            mutation-index
                            (mutated-seq-new-counter mutated-body-forms)))
-         (values #`((define/contract def.id/sig def.ctc
+         (values (quasisyntax/loc stx
+                   ((define/contract def.id/sig def.ctc
                       #,@(mutated-seq-result mutated-body-forms))
-                    #,@mutated-program-rest)
+                    #,@mutated-program-rest))
                  new-counter)]
 
         ;; Ignore anything else
         [(other-e e ...)
          ;; lltodo: if this works then should refactor to use defines
          (define-values (mutated-program-rest new-counter)
-           (mutate-program #'(e ...)
+           (mutate-program (syntax/loc stx (e ...))
                            mutation-index
                            counter))
-         (values #`(other-e #,@mutated-program-rest)
+         (values (quasisyntax/loc stx
+                   (other-e #,@mutated-program-rest))
                  new-counter)]
         [()
          ;; signal no more mutations in this module
@@ -698,6 +707,3 @@
         (class
           (define/override (f x) x)
           (define/private (g x) x)))}))
-
-;; lltodo: no-op mutations still increment the counter
-
