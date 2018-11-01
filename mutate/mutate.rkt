@@ -38,6 +38,7 @@
 
 (define =/= (curry not =))
 
+;; mutate: stx -> stx
 (define-mutators mutate
   ;; operator mutation
   (< <-> <=)
@@ -76,89 +77,161 @@
   ;; constant mutation
   [(_  (~and value
              (~not (fn arg ...))))
-   (let ([v (syntax->datum #'value)])
-     (match v
-       [(? boolean?)
-        #'(not value)]
-       [1 #'0]
-       [-1 #'1]
-       [5 #'-1]
-       [(? integer?) #'(add1 value)]
-       [(? number?) #'(- -1 value)]
-       [_
-        #'value]))])
+   (match (syntax->datum #'value)
+     [(? boolean?)
+      #'(not value)]
+     [1 #'0]
+     [-1 #'1]
+     [5 #'-1]
+     [(? integer?) #'(add1 value)]
+     [(? number?) #'(- -1 value)]
+     [_
+      #'value])])
 
-(define (mutate-body stx)
-  (if make-mutants
+;; lltodo: wiw: refactoring mutate-body and mutate-program
+;; to allow creating multiple mutants from a single expression.
+;; To do so, need to return not only the (possibly mutated) syntax,
+;; but also a new counter indicating if mutation occurred.
+(define-syntax-class method/public-or-override
+  #:description "define/public or /override method"
+  (pattern (~or ((~datum define/public) id+other/pub ...)
+                ((~datum define/override) id+other/over ...))
+           #:with pub #'(~? (define/public id+other/pub ...))
+           #:with over #'(~? (define/override id+other/over ...))))
+
+(define (drop-index lst idx)
+  (append (take lst idx)
+          (take-right lst (- (length lst) idx 1))))
+
+(struct mutated-seq (result new-counter))
+
+(define/contract (mutate-in-sequence stxs mutation-index counter)
+  ((listof syntax?) natural? natural? . -> . mutated-seq?)
+
+  (define stxs-count (length stxs))
+  (define index-to-mutate (- mutation-index counter))
+  (define should-mutate? (< index-to-mutate stxs-count))
+  (define new-counter (+ counter stxs-count)) ;; record each el was considered
+  (define stxs-with-mutant
+    (if should-mutate?
+        (append (take stxs index-to-mutate)
+                (mutate (list-ref stxs index-to-mutate))
+                (drop stxs (add1 index-to-mutate)))
+        stxs))
+  (mutated-seq stxs-with-mutant new-counter))
+
+;; mutate-body: stx nat nat -> (values stx <counter val>)
+;;
+;; This is the only function that calls mutate, so it needs to do the
+;; bookkeeping for it.
+(define (mutate-body stx mutation-index counter)
+  (if (and make-mutants
+           (<= counter mutation-index))
       (syntax-parse stx
         ;; modify class methods
         [((~datum class)
           e ...
-          (~or ((~datum define/public) id+other/pub ...)
-               ((~datum define/override) id+other/over ...))
+          m:method/public-or-override ...
           more-e ...)
-         #`(class e ...
-             #,(if (attribute id+other/pub)
-                   (mutate #'(define/public id+other/pub ...))
-                   (mutate #'(define/override id+other/over ...)))
-             more-e ...)]
+         (define pub-methods (syntax-e #'(m.pub ...)))
+         (define over-methods (syntax-e #'(m.over ...)))
+         (define all-methods (append pub-methods over-methods))
+         (define mutated-methods (mutate-in-sequence all-methods
+                                                     mutation-index
+                                                     counter))
+         (values #`(class e ...
+                         #,@(mutated-seq-result mutated-methods)
+                         more-e ...)
+                 (mutated-seq-new-counter mutated-methods))]
         ;; leave other classes alone
         [((~datum class) e ...)
-         #'(class e ...)]
+         (values #'(class e ...)
+                 counter)]
 
         ;; modify function apps
         [((~and fn:id (~not (~or (~datum λ)
                                  (~datum lambda)))) arg ...)
          ;; A function application may not have an applicable mutation
          ;; First, see if it does..
-         (let ([mutated (mutate #'(fn arg ...))])
-           (if (equal? (syntax->datum #'(fn arg ...))
-                       (syntax->datum mutated))
-               ;; if not, push mutation down to arguments
-               #'(fn (mutate-body arg) ...)
-               ;; if it does, stop there
-               mutated))]
+         (define mutated (mutate #'(fn arg ...)))
+         (define app-mutation-failed? (equal? (syntax->datum #'(fn arg ...))
+                                              (syntax->datum mutated)))
+         (define args (syntax-e #'(arg ...)))
+         (define mutated-args (mutate-in-sequence args mutation-index counter))
+         (if app-mutation-failed?
+             ;; if no applicable mutation, push it down to arguments
+             (values #`(fn #,@(mutated-seq-result mutated-args))
+                     (mutated-seq-new-counter mutated-args))
+             ;; if there was one, stop there
+             (values mutated
+                     (add1 counter)))]
 
         ;; anything else, just try mutate
         [e
-         (mutate #'e)])
+         (values (mutate #'e)
+                 (add1 counter))])
 
-      stx))
+      (values stx counter)))
 
+
+(define/contract (mutate-body-in-sequence stxs mutation-index counter)
+  ((listof syntax?) natural? natural? . -> . mutated-seq?)
+
+  (define-values (mutated new-counter)
+    (for/fold ([mutated-seq/rev '()]
+               [counter-so-far counter])
+              #:result (values (reverse mutated-seq/rev) counter-so-far)
+              ([body-stx (in-list stxs)])
+      (define-values (mutated-stx new-counter)
+        (mutate-body body-stx mutation-index counter-so-far))
+      (define new-seq (cons mutated-stx mutated-seq/rev))
+      (values new-seq new-counter)))
+
+  (mutated-seq mutated new-counter))
 
 ;; lltodo: decisions about when to mutate should be on an
 ;; expression-by-expression basis, not definitions
 ;; Just need to push the mutate? logic down lower, and
 ;; have mutate-body and mutate-expr return the new counter
 ;; somehow
+
+(define-syntax-class contracted-definition
+  #:description "define/contract form"
+  (pattern (define/contract id/sig ctc body ...)))
+
+;; mutate-program: stx nat nat -> (values stx <counter val>)
 (define (mutate-program stx mutation-index [counter 0])
-  (if make-mutants
+  (if (and make-mutants
+           (<= counter mutation-index))
       (syntax-parse stx
         ;; Mutate definition body (could be class, function, other value)
-        [((define/contract id/sig ctc body ...) e ...)
-         (let* ([mutate? (= counter mutation-index)])
-           (if mutate?
-               #`((define/contract id/sig ctc
-                    #,@(map mutate-body (syntax-e #'(body ...))))
-                  e ...)
-               #`((define/contract id/sig ctc
-                    body ...)
-                  #,@(mutate-program #'(e ...)
-                                     mutation-index
-                                     (add1 counter)))))]
+        [(def:contracted-definition e ...)
+         (define-values (mutated-body-forms)
+           (mutate-body-in-sequence #'(def.body ...)))
+         (define-values (mutated-program-rest new-counter)
+           (mutate-program #'(e ...)
+                           mutation-index
+                           (mutated-seq-new-counter mutated-body-forms)))
+         (values #`((define/contract def.id/sig def.ctc
+                      #,@(mutated-seq-result mutated-body-forms))
+                    #,@mutated-program-rest)
+                 new-counter)]
 
         ;; Ignore anything else
         [(other-e e ...)
-         #`(other-e
-            #,@(mutate-program #'(e ...)
-                               mutation-index
-                               counter))]
+         ;; lltodo: if this works then should refactor to use defines
+         (define-values (mutated-program-rest new-counter)
+           (mutate-program #'(e ...)
+                           mutation-index
+                           counter))
+         (values #`(other-e #,@mutated-program-rest)
+                 new-counter)]
         [()
          ;; signal no more mutations in this module
          (error 'mutate-program
                 "Mutation index exceeds mutatable forms in module")])
 
-      stx))
+      (values stx counter)))
 
 (module+ test
   (require rackunit)
