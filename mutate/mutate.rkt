@@ -36,6 +36,10 @@
                 s])
              s))]))
 
+(define/contract (unmutated? orig mutated)
+  (syntax? syntax? . -> . boolean?)
+  (equal? (syntax->datum orig) (syntax->datum mutated)))
+
 (define =/= (curry not =))
 
 ;; mutate: stx -> stx
@@ -145,8 +149,7 @@
          ;; A function application may not have an applicable mutation
          ;; First, see if it does..
          (define mutated (mutate #'(fn arg ...)))
-         (define app-mutation-failed? (equal? (syntax->datum #'(fn arg ...))
-                                              (syntax->datum mutated)))
+         (define app-mutation-failed? (unmutated? #'(fn arg ...) mutated))
 
          (cond [(or app-mutation-failed?
                     (< counter mutation-index))
