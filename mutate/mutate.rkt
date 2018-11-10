@@ -57,24 +57,44 @@
 (define-syntax (mdo stx)
   (syntax-parse stx
     #:datum-literals (count-with def return in)
-    [(_ [count-with (counter-id:id init-value:expr)]
+    [(_ [count-with (counter-id:id current-value:expr)]
         (def bound-id:id m-expr:expr)
         more-clauses ...+)
-     #'(match-let* ([counter-id init-value]
-                    [(mutated stx new-counter) m-expr]
-                    [bound-id stx])
-         (mdo [count-with (counter-id new-counter)]
+     #'(match-let* ([counter-id current-value]
+                    [(mutated bound-id counter-id) m-expr])
+         (mdo [count-with (counter-id counter-id)]
               more-clauses ...))]
     ;; return <=> mmap
-    [(_ [count-with (counter-id:id init-value:expr)]
+    [(_ [count-with (counter-id:id current-value:expr)]
         [return m-expr:expr])
      #'(mutated m-expr
-                init-value)]
+                counter-id)]
     ;; in <=> mbind
-    [(_ [count-with (counter-id:id init-value:expr)]
+    [(_ [count-with (counter-id:id current-value:expr)]
         [in m-expr:expr])
-     #'(let ([counter-id init-value])
-         m-expr)]))
+     #'m-expr]))
+
+;; bind version that shows more clearly how this is similar to monadic do
+#;(define-syntax (mdo stx)
+  (syntax-parse stx
+    #:datum-literals (count-with def return in)
+    [(_ [count-with (counter-id:id current-value:expr)]
+        (def bound-id:id m-expr:expr)
+        more-clauses ...+)
+     #'(mbind (λ (bound-id counter-id)
+                (mdo [count-with (counter-id counter-id)]
+                     more-clauses ...))
+              (let ([counter-id current-value])
+                m-expr))]
+    ;; return <=> mmap
+    [(_ [count-with (counter-id:id current-value:expr)]
+        [return m-expr:expr])
+     #'(mutated m-expr
+                counter-id)]
+    ;; in <=> mbind
+    [(_ [count-with (counter-id:id current-value:expr)]
+        [in m-expr:expr])
+     #'m-expr]))
 
 (define-syntax-rule (mdo* def-clause result-clause)
   (mdo [count-with (_ #f)]
