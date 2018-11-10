@@ -52,6 +52,35 @@
   (f (mutated-stx m)
      (mutated-new-counter m)))
 
+;; Performs sequential mutations with automatic threading of the
+;; counter
+(define-syntax (mdo stx)
+  (syntax-parse stx
+    #:datum-literals (count-with def return in)
+    [(_ [count-with (counter-id:id init-value:expr)]
+        (def bound-id:id m-expr:expr)
+        more-clauses ...+)
+     #'(match-let* ([counter-id init-value]
+                    [(mutated stx new-counter) m-expr]
+                    [bound-id stx])
+         (mdo [count-with (counter-id new-counter)]
+              more-clauses ...))]
+    ;; return <=> mmap
+    [(_ [count-with (counter-id:id init-value:expr)]
+        [return m-expr:expr])
+     #'(mutated m-expr
+                init-value)]
+    ;; in <=> mbind
+    [(_ [count-with (counter-id:id init-value:expr)]
+        [in m-expr:expr])
+     #'(let ([counter-id init-value])
+         m-expr)]))
+
+(define-syntax-rule (mdo* def-clause result-clause)
+  (mdo [count-with (_ #f)]
+       def-clause
+       result-clause))
+
 #|----------------------------------------------------------------------|#
 
 #|----------------------------------------------------------------------|#
@@ -249,38 +278,33 @@
       (syntax-parse stx
         ;; begin: statement deletion
         [((~datum begin) e1 e2 ...+)
-         (define top-level-mutation
-           (maybe-mutate stx
-                         (syntax/loc stx (begin e2 ...))
-                         mutation-index
-                         counter))
-         ;; if top-level succeeded, then the following will have no effect
-         (mbind (λ (stx/mutated new-counter)
-                  (mutate-expr* stx/mutated
+         (mdo [count-with (__ counter)]
+              (def begin-stx (maybe-mutate stx
+                                           (syntax/loc stx (begin e2 ...))
+                                           mutation-index
+                                           __))
+              ;; applying both mutations works because of counter tracking!
+              [in (mutate-expr* begin-stx
                                 mutation-index
-                                new-counter))
-                top-level-mutation)]
+                                __)])]
 
         ;; conditionals: negate condition, or mutate result exprs
         [((~datum cond) clause ...)
-         (define clauses-stxs (syntax-e (syntax/loc stx (clause ...))))
-         (define mutated-clauses (mutate-cond-in-seq clauses-stxs
-                                                     mutation-index
-                                                     counter))
-         (mmap (λ (clauses)
-                 (quasisyntax/loc stx
-                   (cond #,@clauses)))
-               mutated-clauses)]
+         (define clauses-stxs (syntax-e (syntax/loc stx
+                                          (clause ...))))
+         (mdo* (def clauses (mutate-cond-in-seq clauses-stxs
+                                                mutation-index
+                                                counter))
+               [return (quasisyntax/loc stx
+                         (cond #,@clauses))])]
         [((~datum if) cond-e then-e else-e)
          (define clause-stx (list (quasisyntax/loc stx
                                     [#,@(rest (syntax-e stx))])))
-         (define mutated-clause (mutate-cond-in-seq clause-stx
-                                                    mutation-index
-                                                    counter))
-         (mmap (λ (clause)
-                 (quasisyntax/loc stx
-                   (if #,@(first clause))))
-               mutated-clause)]
+         (mdo* (def clause (mutate-cond-in-seq clause-stx
+                                               mutation-index
+                                               counter))
+               [return (quasisyntax/loc stx
+                         (if #,@(first clause)))])]
 
         ;; mutate arbitrary sexp
         [(e ...)
@@ -294,15 +318,12 @@
 
 ;; just applies `mutate-expr` to all subexprs of `stx`
 (define (mutate-expr* stx mutation-index counter)
-  (define parts-stxs (syntax-e stx))
-  (define mutated-parts (mutate-in-seq parts-stxs
-                                       mutation-index
-                                       counter
-                                       mutate-expr))
-  (mmap (λ (parts)
-          (quasisyntax/loc stx
-            (#,@parts)))
-        mutated-parts))
+  (mdo* (def parts (mutate-in-seq (syntax-e stx)
+                                  mutation-index
+                                  counter
+                                  mutate-expr))
+        [return (quasisyntax/loc stx
+                  (#,@parts))]))
 
 
 ;; mutate-program: stx nat nat -> mutated
@@ -324,31 +345,26 @@
         [(def:contracted-definition e ...)
          (define body-stxs (syntax-e (syntax/loc stx
                                        (def.body ...))))
-         (match-define (mutated body-forms after-body-counter)
-           (mutate-in-seq body-stxs
-                          mutation-index
-                          counter
-                          mutate-expr))
-         (define mutated-program-rest
-           (mutate-program (syntax/loc stx (e ...))
-                           mutation-index
-                           after-body-counter))
-         (mmap (λ (program-rest)
-                 (quasisyntax/loc stx
-                   ((define/contract def.id/sig def.ctc
-                      #,@body-forms)
-                    #,@program-rest)))
-               mutated-program-rest)]
+         (mdo [count-with (__ counter)]
+              (def body-forms (mutate-in-seq body-stxs
+                                             mutation-index
+                                             __
+                                             mutate-expr))
+              (def program-rest (mutate-program (syntax/loc stx (e ...))
+                                                mutation-index
+                                                __))
+              [return (quasisyntax/loc stx
+                        ((define/contract def.id/sig def.ctc
+                           #,@body-forms)
+                         #,@program-rest))])]
 
         ;; Ignore anything else
         [(other-e e ...)
-         (define mutated-rest (mutate-program (syntax/loc stx (e ...))
+         (mdo* (def rest-stxs (mutate-program (syntax/loc stx (e ...))
                                               mutation-index
                                               counter))
-         (mmap (λ (rest-stxs)
-                 (quasisyntax/loc stx
-                   (other-e #,@rest-stxs)))
-               mutated-rest)]
+               [return (quasisyntax/loc stx
+                         (other-e #,@rest-stxs))])]
         [()
          ;; signal no more mutations in this module
          (raise (mutation-index-exception))])
@@ -383,19 +399,15 @@
     . -> .
     mutated?))
 
-  (define (add-mutated-element stx stxs-so-far counter-so-far)
-    (define mutated-element (mutator stx
-                                     mutation-index
-                                     counter-so-far))
-    (define add-stxs-so-far (curryr cons stxs-so-far))
-    (mmap add-stxs-so-far
-          mutated-element))
-
   (for/fold ([mutated-so-far (mutated '() counter)]
              #:result (mmap reverse mutated-so-far))
             ([stx (in-list stxs)])
-    (mbind (curry add-mutated-element stx)
-           mutated-so-far)))
+    (mdo [count-with (__ #f)]
+         (def stxs-so-far mutated-so-far)
+         (def element (mutator stx
+                               mutation-index
+                               __))
+         [return (cons element stxs-so-far)])))
 
 (module+ test
   ;; lltodo: I'm doing this pat a lot. I should really have a macro
@@ -559,30 +571,20 @@ Actual:
   ((listof cond-clause?) natural? natural? . -> . mutated?)
 
   (define unwrapped-clauses (map syntax-e clauses))
-  (define conditions (map first unwrapped-clauses))
-  (define/contract bodies ;; each condition has a list of body-exprs
+  (define condition-stxs (map first unwrapped-clauses))
+  (define/contract body-stxs* ;; each condition has a list of body-exprs
     (listof (listof syntax?))
     (map rest unwrapped-clauses))
-  (define mutated-conditions-seq
-    (mutate-in-seq conditions
-                   mutation-index
-                   counter
-                   mutate-condition))
-  (define mutated-conditions (mutated-stx mutated-conditions-seq))
-  (define after-conditions-counter
-    (mutated-new-counter mutated-conditions-seq))
-
-  (define mutated-bodies-seq
-    (mutate-in-seq* bodies
-                    mutation-index
-                    after-conditions-counter
-                    mutate-expr))
-  (define mutated-bodies (mutated-stx mutated-bodies-seq))
-  (define new-counter (mutated-new-counter mutated-bodies-seq))
-  (mutated (map cons
-                mutated-conditions
-                mutated-bodies)
-           new-counter))
+  (mdo [count-with (__ counter)]
+       (def conditions (mutate-in-seq condition-stxs
+                                      mutation-index
+                                      __
+                                      mutate-condition))
+       (def bodies* (mutate-in-seq* body-stxs*
+                                   mutation-index
+                                   __
+                                   mutate-expr))
+       [return (map cons conditions bodies*)]))
 
 (module+ test
   (define-check/loc (check-mutation/in-conds orig-seq
@@ -1169,5 +1171,6 @@ Actual:
    #'{(define (foo x) x)
       (define/contract a any/c (+ (foo 0) 2))}))
 
+;; lltodo: wiw:
 ;; lltodo: also, still need to make the mutate functions insert the
 ;; invocation to enter the "bug" region of the program.
