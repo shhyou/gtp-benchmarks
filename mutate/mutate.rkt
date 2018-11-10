@@ -12,20 +12,53 @@
          syntax/parse
          racket/match)
 
+#|----------------------------------------------------------------------|#
 ;; Data
 (define make-mutants #t)
 (struct mutation-index-exception ())
 (define mutation-index? natural?)
 (define counter? natural?)
-(struct mutated (stx new-counter) #:transparent)
-(define (mutated/c a) (struct/c mutated a counter?))
-;;(struct mutated-seq (stxs new-counter) #:transparent)
 
+;; mutated represents a piece of syntax that has been considered for
+;; mutation; it may or may not have actually been mutated.
+;; It carries with it the state of the mutation search _after_ its
+;; consideration for mutation.
+;; Thus, all mutation attempts after some mutated object should
+;; use its accompanying counter value.
+(struct mutated (stx new-counter) #:transparent)
+
+(define (mutated/c a) (struct/c mutated a counter?))
+
+;; lltodo: use parametric->/c?
+(define A any/c)
+(define B any/c)
+(define C any/c)
+;; maps over mutated-stx
+(define/contract (mmap f m)
+  ((A . -> . B)
+   (mutated/c A)
+   . -> .
+   (mutated/c B))
+
+  (mutated (f (mutated-stx m))
+           (mutated-new-counter m)))
+
+(define/contract (mbind f m)
+  ((A counter? . -> . (mutated/c B))
+   (mutated/c A)
+   . -> .
+   (mutated/c B))
+
+  (f (mutated-stx m)
+     (mutated-new-counter m)))
+
+#|----------------------------------------------------------------------|#
+
+#|----------------------------------------------------------------------|#
+;; Test setup
 (define (exprs-equal? a b)
     (equal? (syntax->datum a)
             (syntax->datum b)))
-
-;; Test setup
 (module+ test
   (require rackunit)
   (require "custom-check.rkt")
@@ -40,9 +73,10 @@
      (mutate-program-wrapper orig-prog index)
      new-prog)))
 
+#|----------------------------------------------------------------------|#
 ;; Utilities
 
-;; Manage the decision of whether or not to apply a ready, valid
+;; Manages the decision of whether or not to apply a ready, valid
 ;; mutation based on `mutation-index` and `counter`.
 ;; Assumes that `old-stx` and `new-stx` are different.
 (define/contract (maybe-mutate old-stx new-stx mutation-index counter)
@@ -107,32 +141,7 @@
              (mutated stx-name
                       counter)))]))
 
-(define/contract (unmutated? orig mutated)
-  (syntax? syntax? . -> . boolean?)
-  (equal? (syntax->datum orig) (syntax->datum mutated)))
-
 (define =/= (compose not =))
-
-(define A any/c)
-(define B any/c)
-;; maps over mutated-stx
-(define/contract (mmap f m)
-  ((A . -> . B)
-   (mutated/c A)
-   . -> .
-   (mutated/c B))
-
-  (mutated (f (mutated-stx m))
-           (mutated-new-counter m)))
-
-(define/contract (mbind f m)
-  ((A counter? . -> . (mutated/c B))
-   (mutated/c A)
-   . -> .
-   (mutated/c B))
-
-  (f (mutated-stx m)
-     (mutated-new-counter m)))
 
 
 #|----------------------------------------------------------------------|#
@@ -218,7 +227,11 @@
 ;; Syntax traversers
 ;;
 ;; These functions traverse the program syntax finding where to apply
-;; the above mutators
+;; mutations.
+;; Traversers can only:
+;; 1. Apply structural/semantic mutations like moving expressions around
+;;    or messing with conditionals
+;; 2. Use one of the above mutators to perform other mutations
 
 (define-syntax-class method/public-or-override
   #:description "define/public or /override method"
@@ -250,22 +263,24 @@
 
         ;; conditionals: negate condition, or mutate result exprs
         [((~datum cond) clause ...)
-         (define clauses (syntax-e (syntax/loc stx (clause ...))))
-         (define mutated-clauses (mutate-cond-in-seq clauses
+         (define clauses-stxs (syntax-e (syntax/loc stx (clause ...))))
+         (define mutated-clauses (mutate-cond-in-seq clauses-stxs
                                                      mutation-index
                                                      counter))
-         (mutated (quasisyntax/loc stx
-                    (cond #,@(mutated-stx mutated-clauses)))
-                  (mutated-new-counter mutated-clauses))]
+         (mmap (λ (clauses)
+                 (quasisyntax/loc stx
+                   (cond #,@clauses)))
+               mutated-clauses)]
         [((~datum if) cond-e then-e else-e)
-         (define clause (list (quasisyntax/loc stx
-                                [#,@(rest (syntax-e stx))])))
-         (define mutated-clause (mutate-cond-in-seq clause
+         (define clause-stx (list (quasisyntax/loc stx
+                                    [#,@(rest (syntax-e stx))])))
+         (define mutated-clause (mutate-cond-in-seq clause-stx
                                                     mutation-index
                                                     counter))
-         (mutated (quasisyntax/loc stx
-                    (if #,@(first (mutated-stx mutated-clause))))
-                  (mutated-new-counter mutated-clause))]
+         (mmap (λ (clause)
+                 (quasisyntax/loc stx
+                   (if #,@(first clause))))
+               mutated-clause)]
 
         ;; mutate arbitrary sexp
         [(e ...)
@@ -279,14 +294,15 @@
 
 ;; just applies `mutate-expr` to all subexprs of `stx`
 (define (mutate-expr* stx mutation-index counter)
-  (define parts (syntax-e stx))
-  (define mutated-parts (mutate-in-seq parts
+  (define parts-stxs (syntax-e stx))
+  (define mutated-parts (mutate-in-seq parts-stxs
                                        mutation-index
                                        counter
                                        mutate-expr))
-  (mutated (quasisyntax/loc stx
-             (#,@(mutated-stx mutated-parts)))
-           (mutated-new-counter mutated-parts)))
+  (mmap (λ (parts)
+          (quasisyntax/loc stx
+            (#,@parts)))
+        mutated-parts))
 
 
 ;; mutate-program: stx nat nat -> mutated
@@ -306,31 +322,33 @@
         ;; Mutate contracted definition bodies
         ;; (could be class, function, other value)
         [(def:contracted-definition e ...)
-         (define mutated-body-forms
-           (mutate-in-seq (syntax-e (syntax/loc stx
-                                      (def.body ...)))
+         (define body-stxs (syntax-e (syntax/loc stx
+                                       (def.body ...))))
+         (match-define (mutated body-forms after-body-counter)
+           (mutate-in-seq body-stxs
                           mutation-index
                           counter
                           mutate-expr))
-         (match-define (mutated mutated-program-rest new-counter)
+         (define mutated-program-rest
            (mutate-program (syntax/loc stx (e ...))
                            mutation-index
-                           (mutated-new-counter mutated-body-forms)))
-         (mutated (quasisyntax/loc stx
-                    ((define/contract def.id/sig def.ctc
-                       #,@(mutated-stx mutated-body-forms))
-                     #,@mutated-program-rest))
-                  new-counter)]
+                           after-body-counter))
+         (mmap (λ (program-rest)
+                 (quasisyntax/loc stx
+                   ((define/contract def.id/sig def.ctc
+                      #,@body-forms)
+                    #,@program-rest)))
+               mutated-program-rest)]
 
         ;; Ignore anything else
         [(other-e e ...)
-         (match-define (mutated mutated-program-rest new-counter)
-           (mutate-program (syntax/loc stx (e ...))
-                           mutation-index
-                           counter))
-         (mutated (quasisyntax/loc stx
-                    (other-e #,@mutated-program-rest))
-                  new-counter)]
+         (define mutated-rest (mutate-program (syntax/loc stx (e ...))
+                                              mutation-index
+                                              counter))
+         (mmap (λ (rest-stxs)
+                 (quasisyntax/loc stx
+                   (other-e #,@rest-stxs)))
+               mutated-rest)]
         [()
          ;; signal no more mutations in this module
          (raise (mutation-index-exception))])
@@ -351,25 +369,6 @@
 ;; These functions select expressions to mutate from a sequence of
 ;; expressions, primarily to handle the bookkeeping of the counter
 ;; value for such cases
-
-#;(define/contract (mutate-in-seq stxs mutation-index counter
-                                [mutator mutate-datum])
-  (((listof syntax?) natural? natural?)
-   ((syntax? natural? natural? . -> . mutated?))
-   . ->* .
-   mutated?)
-
-  (define stxs-count (length stxs))
-  (define index-to-mutate (- mutation-index counter))
-  (define should-mutate? (< index-to-mutate stxs-count))
-  (define new-counter (+ counter stxs-count)) ;; record each el was considered
-  (define stxs-with-mutant
-    (if should-mutate?
-        (append (take stxs index-to-mutate)
-                (list (mutator (list-ref stxs index-to-mutate)))
-                (drop stxs (add1 index-to-mutate)))
-        stxs))
-  (mutated stxs-with-mutant new-counter))
 
 (define/contract (mutate-in-seq stxs mutation-index counter
                                 mutator)
@@ -550,21 +549,6 @@ Actual:
             (list #''a #'1)
             ;; ... but mutate-expr will!
             (list #'(test? (add1 2))))]))
-
-
-#;(define/contract (mutate-expr-in-seq* bodies mutation-index counter)
-  ((listof (listof syntax?)) natural? natural? . -> . mutated?)
-
-  (for/fold ([mutated-so-far (mutated '() counter)])
-            ([body-exprs (in-list bodies)])
-    (define mutated-so-far (mutated-stx mutated-so-far))
-    (define counter-so-far (mutated-new-counter mutated-so-far))
-    (define mutated-body (mutate-expr-in-seq body-exprs
-                                             mutation-index
-                                             counter-so-far))
-    (mutated (append mutated-so-far
-                     (list (mutated-stx mutated-body)))
-             (mutated-new-counter mutated-body))))
 
 (define cond-clause? (syntax-parser
                        [[condition:expr b:expr r:expr ...]
@@ -1166,13 +1150,7 @@ Actual:
    [6 #'{(define/contract a any/c (+ (+ 1 2)
                                      (- 3 (add1 4))))}])
 
-  ;; This makes me realize: the problem here is just that I treat function
-  ;; applications specially
-  ;; I should just treat it as a sequence of body-exprs to mutate
-  ;; Then my mutate-datum primitive should handle operators by mutating
-  ;; + <-> - etc instead of (+ a b) <-> (- a b)
-  ;;
-  ;; here's a test chrystallizing this in two ways:
+  ;; Test the mutator's ability to handle higher order expressions
   ;; 1. The function being applied is an expression
   ;; 2. Primitives that should be mutated (+, -) appear in expression ctx
   ;;    rather than application ctx
@@ -1184,8 +1162,6 @@ Actual:
    [3 #'{(define/contract a any/c ((if #t + -) 0 2))}]
    [4 #'{(define/contract a any/c ((if #t + -) 1 (add1 2)))}])
 
-  ;; lltodo: bug here
-  ;; Very interesting: define -> define/contract
   (check-mutation
    1
    #'{(define (foo x) x)
@@ -1193,30 +1169,5 @@ Actual:
    #'{(define (foo x) x)
       (define/contract a any/c (+ (foo 0) 2))}))
 
-;; ll: wiw:
-;; change the function application handling as follows:
-;; 1. Treat function apps as just a sequence of body-exprs to mutate
-;; 2. Change mutate to just match their primitive operators alone
-;;
-;; Ok, then what about `begin`, `define/public`?
-;; I think I should just move them over into mutate-body
-;; Then I should rename mutate-body -> mutate-expr
-;; and rename mutate -> mutate-datum
-;;
-;; Thus, mutate-body (mutate-expr) will have all of the rules for
-;; performing expression-level mutations, while mutate (mutate-datum)
-;; will just have single-element/datum mutations
-;;
-;; So new plan:
-;; 1. [✓] Move expression-level mutations into mutate-body
-;; 2. [✓] Change mutate to be datums-only
-;; 3. [✓] Rename the functions
-;; 4. [✓] Change handling of function apps
-
-
-
 ;; lltodo: also, still need to make the mutate functions insert the
 ;; invocation to enter the "bug" region of the program.
-
-;; lltodo: first, should refactor all the places that I take apart
-;; mutated and put it back together to use mmap and mbind
