@@ -39,5 +39,3 @@
              (let ([res (begin body ...)])
                (unless (equal? res #t)
                  (fail-check res))))))]))
-
-

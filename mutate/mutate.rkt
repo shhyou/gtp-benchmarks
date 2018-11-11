@@ -14,7 +14,7 @@
          "mutated.rkt")
 
 #|----------------------------------------------------------------------|#
-;; Data
+;; Data; see mutated.rkt
 (define make-mutants #t)
 (struct mutation-index-exception ())
 
@@ -111,7 +111,7 @@
 
 
 #|----------------------------------------------------------------------|#
-;; Mutators: functions that actually mutate syntax
+;; Mutators: perform simple syntactic mutations
 
 ;; mutate-datum: stx nat nat -> mutated
 (define-mutators (mutate-datum stx mutation-index counter)
@@ -196,8 +196,8 @@
 ;; mutations.
 ;; Traversers can only:
 ;; 1. Apply structural/semantic mutations like moving expressions around
-;;    or messing with conditionals
-;; 2. Use one of the above mutators to perform other mutations
+;;    or negating conditionals
+;; 2. Use one of the above mutators to perform syntax substitions
 
 (define-syntax-class method/public-or-override
   #:description "define/public or /override method"
@@ -253,7 +253,7 @@
 
       (mutated stx counter)))
 
-;; just applies `mutate-expr` to all subexprs of `stx`
+;; applies `mutate-expr` to all subexprs of `stx`
 (define (mutate-expr* stx mutation-index counter)
   (mdo* (def parts (mutate-in-seq (syntax-e stx)
                                   mutation-index
@@ -263,7 +263,6 @@
                   (#,@parts))]))
 
 
-;; mutate-program: stx nat nat -> mutated
 ;; Note: distinction between mutate-program and mutate-expr
 ;; is necessary because mutate-program should descend only into
 ;; contracted top level forms, while mutate-expr can descend into
@@ -347,9 +346,7 @@
          [return (cons element stxs-so-far)])))
 
 (module+ test
-  ;; lltodo: I'm doing this pat a lot. I should really have a macro
-  ;; version of define-check/loc.
-  (define-check/loc (check-mutation/in-seq* orig-seq
+  (define-check/loc (check-mutation/in-seq orig-seq
                                             seq-mutator
                                             mutator
                                             pretty-printer
@@ -377,13 +374,6 @@ Actual:
                         (pretty-printer expect)
                         (pretty-printer ms)))))
       #t))
-  (define-syntax-rule (check-mutation/in-seq
-                       seq seq-mutator mutator
-                       pretty-printer
-                       [mutation-index expected] ...)
-    (check-mutation/in-seq* seq seq-mutator mutator pretty-printer
-                            (list (list mutation-index
-                                        expected) ...)))
 
   (check-mutation/in-seq
    (list #'#t
@@ -394,28 +384,28 @@ Actual:
    mutate-datum
    (curry map syntax->datum)
    ;; only elements 0 and 2 are mutatable datums
-   [0 (list #'(not #t)
-            #''a
-            #'1
-            #'(+ 1 2))]
-   [1 (list #'#t
-            #''a
-            #'0
-            #'(+ 1 2))]
-   ;; other elements aren't touched, regardless of mutation-index
-   [2 (list #'#t
-            #''a
-            #'1
-            #'(+ 1 2))]
-   [3 (list #'#t
-            #''a
-            #'1
-            #'(+ 1 2))]
-   [4 (list #'#t
-            #''a
-            #'1
-            #'(+ 1 2))]
-   #| ... |#)
+   `([0 (,#'(not #t)
+         ,#''a
+         ,#'1
+         ,#'(+ 1 2))]
+     [1 (,#'#t
+         ,#''a
+         ,#'0
+         ,#'(+ 1 2))]
+     ;; other elements aren't touched, regardless of mutation-index
+     [2 (,#'#t
+         ,#''a
+         ,#'1
+         ,#'(+ 1 2))]
+     [3 (,#'#t
+         ,#''a
+         ,#'1
+         ,#'(+ 1 2))]
+     [4 (,#'#t
+         ,#''a
+         ,#'1
+         ,#'(+ 1 2))]
+     #| ... |#))
 
   (check-mutation/in-seq
    (list #'#t
@@ -424,20 +414,20 @@ Actual:
    mutate-in-seq
    mutate-condition
    (curry map syntax->datum)
-   [0 (list #'(not #t)
-            #''a
-            #'(test? 2))]
-   [1 (list #'#t
-            #'(not 'a)
-            #'(test? 2))]
-   [2 (list #'#t
-            #''a
-            #'(not (test? 2)))]
-   ;; mutation index exceeded size of list, no more will be mutated
-   [3 (list #'#t
-            #''a
-            #'(test? 2))]
-   #| ... |#))
+   `([0 (,#'(not #t)
+         ,#''a
+         ,#'(test? 2))]
+     [1 (,#'#t
+         ,#'(not 'a)
+         ,#'(test? 2))]
+     [2 (,#'#t
+         ,#''a
+         ,#'(not (test? 2)))]
+     ;; mutation index exceeded size of list, no more will be mutated
+     [3 (,#'#t
+         ,#''a
+         ,#'(test? 2))]
+     #| ... |#)))
 
 
 
@@ -466,25 +456,25 @@ Actual:
    #;[ (list (list #'#t #'#f)
             (list #''a #'1)
             (list #'(test? 2)))]
-   [0 (list (list #'(not #t) #'#f)
-            (list #''a #'1)
-            (list #'(test? 2)))]
-   [1 (list (list #'#t #'(not #f))
-            (list #''a #'1)
-            (list #'(test? 2)))]
-   [2 (list (list #'#t #'#f)
-            (list #''a #'0)
-            (list #'(test? 2)))]
-   [3 (list (list #'#t #'#f)
-            (list #''a #'1)
-            ;; mutate-datum won't change applications...
-            ;; [[but%20mutate-expr%20will!]]
-            (list #'(test? 2)))]
-   ;; mutation index exceeded size of list, no more will be mutated
-   [4 (list (list #'#t #'#f)
-            (list #''a #'1)
-            (list #'(test? 2)))]
-   #| ... |#)
+   `([0 ((,#'(not #t) ,#'#f)
+         (,#''a ,#'1)
+         (,#'(test? 2)))]
+     [1 ((,#'#t ,#'(not #f))
+         (,#''a ,#'1)
+         (,#'(test? 2)))]
+     [2 ((,#'#t ,#'#f)
+         (,#''a ,#'0)
+         (,#'(test? 2)))]
+     [3 ((,#'#t ,#'#f)
+         (,#''a ,#'1)
+         ;; mutate-datum won't change applications...
+         ;; [[but%20mutate-expr%20will!]]
+         (,#'(test? 2)))]
+     ;; mutation index exceeded size of list, no more will be mutated
+     [4 ((,#'#t ,#'#f)
+         (,#''a ,#'1)
+         (,#'(test? 2)))]
+   #| ... |#))
 
   (check-mutation/in-seq
    (list (list #'#t #'#f)
@@ -494,10 +484,10 @@ Actual:
    mutate-expr
    (curry map
           (curry map syntax->datum))
-   [3 (list (list #'#t #'#f)
-            (list #''a #'1)
-            ;; ... but mutate-expr will!
-            (list #'(test? (add1 2))))]))
+   `([3 ((,#'#t ,#'#f)
+         (,#''a ,#'1)
+         ;; ... but mutate-expr will!
+         (,#'(test? (add1 2))))])))
 
 (define cond-clause? (syntax-parser
                        [[condition:expr b:expr r:expr ...]
@@ -605,11 +595,7 @@ Actual:
 ;; methods
 
 (module+ test
-  (define-syntax-rule (check-mutation/sequence orig-program
-                                               [index expect] ...)
-    (check-mutation/sequence* orig-program
-                              (list (list index expect) ...)))
-  (define-check/loc (check-mutation/sequence* orig-program expects)
+  (define-check/loc (check-mutation/sequence orig-program expects)
     #:ignore-parameters
     (let/cc fail
       (for ([expect (in-list expects)])
@@ -675,10 +661,10 @@ Actual:
   (check-mutation/sequence
    #'{(define/contract a positive? 1)
       (define/contract b positive? 2)}
-   [0 #'{(define/contract a positive? 0)
-         (define/contract b positive? 2)}]
-   [1 #'{(define/contract a positive? 1)
-         (define/contract b positive? (add1 2))}])
+   `([0 ,#'{(define/contract a positive? 0)
+            (define/contract b positive? 2)}]
+     [1 ,#'{(define/contract a positive? 1)
+            (define/contract b positive? (add1 2))}]))
 
   (check-mutation
    0
@@ -694,9 +680,9 @@ Actual:
   ;; operators
   (check-mutation/sequence
    #'{(define/contract a any/c (+ 1 2))}
-   [0 #'{(define/contract a any/c (- 1 2))}]
-   [1 #'{(define/contract a any/c (+ 0 2))}]
-   [2 #'{(define/contract a any/c (+ 1 (add1 2)))}])
+   `([0 ,#'{(define/contract a any/c (- 1 2))}]
+     [1 ,#'{(define/contract a any/c (+ 0 2))}]
+     [2 ,#'{(define/contract a any/c (+ 1 (add1 2)))}]))
   (check-mutation
    0
    #'{(define/contract (f x)
@@ -842,18 +828,18 @@ Actual:
         (or x #t))
       (define/contract b positive? 2)}
    ;; Fixed this! ⇓
-   #;[1 #'{(define/contract (f x)
-           any/c
-           (or x #t)) ;; tries to mutate `x` but it's a no-op
-         (define/contract b positive? 2)}]
-   [1 #'{(define/contract (f x)
-           any/c
-           (or x (not #t)))
-         (define/contract b positive? 2)}]
-   [2 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (add1 2))}])
+   `(#;[1 ,#'{(define/contract (f x)
+                any/c
+                (or x #t)) ;; tries to mutate `x` but it's a no-op
+              (define/contract b positive? 2)}]
+     [1 ,#'{(define/contract (f x)
+              any/c
+              (or x (not #t)))
+            (define/contract b positive? 2)}]
+     [2 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (add1 2))}]))
 
   ;; begin
   (check-mutation
@@ -895,48 +881,48 @@ Actual:
       (define/contract (g x)
         any/c
         (if x 1 2))}
-   [2 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 2))
-         (define/contract (g x)
-           any/c
-           (if x 1 2))}]
-   [3 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 0 2))
-         (define/contract (g x)
-           any/c
-           (if x 1 2))}]
-   [4 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 1 (add1 2)))
-         (define/contract (g x)
-           any/c
-           (if x 1 2))}]
-   [5 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 1 2))
-         (define/contract (g x)
-           any/c
-           (if (not x) 1 2))}]
-   [6 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 1 2))
-         (define/contract (g x)
-           any/c
-           (if x 0 2))}]
-   [7 #'{(define/contract (f x)
-           any/c
-           (or x #t))
-         (define/contract b positive? (begin 1 2))
-         (define/contract (g x)
-           any/c
-           (if x 1 (add1 2)))}])
+   `([2 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 2))
+            (define/contract (g x)
+              any/c
+              (if x 1 2))}]
+     [3 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 0 2))
+            (define/contract (g x)
+              any/c
+              (if x 1 2))}]
+     [4 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 1 (add1 2)))
+            (define/contract (g x)
+              any/c
+              (if x 1 2))}]
+     [5 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 1 2))
+            (define/contract (g x)
+              any/c
+              (if (not x) 1 2))}]
+     [6 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 1 2))
+            (define/contract (g x)
+              any/c
+              (if x 0 2))}]
+     [7 ,#'{(define/contract (f x)
+              any/c
+              (or x #t))
+            (define/contract b positive? (begin 1 2))
+            (define/contract (g x)
+              any/c
+              (if x 1 (add1 2)))}]))
 
   ;; Test exception thrown when run out of mutations
   (check-exn
@@ -981,16 +967,16 @@ Actual:
         (class
           (define/override (f x) x)
           (define/public (g x) x)))}
-   [0 #'{(define/contract c
-           any/c
-           (class
-             (define/augment (f x) x)
-             (define/public (g x) x)))}]
-   [1 #'{(define/contract c
-           any/c
-           (class
-             (define/override (f x) x)
-             (define/private (g x) x)))}])
+   `([0 ,#'{(define/contract c
+              any/c
+              (class
+                (define/augment (f x) x)
+                (define/public (g x) x)))}]
+     [1 ,#'{(define/contract c
+              any/c
+              (class
+                (define/override (f x) x)
+                (define/private (g x) x)))}]))
 
   ;; Test that condition expressions are only ever considered for
   ;; mutation once: to negate them
@@ -1000,16 +986,16 @@ Actual:
       (define/contract d any/c (if #t 1 (error (quote wrong))))
       (displayln (quasiquote (c (unquote c))))
       (displayln (quasiquote (d (unquote d))))}
-   [1 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c (if (not #t) 1 (error (quote wrong))))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}]
-   [2 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c (if #t 0 (error (quote wrong))))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}])
+   `([1 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c (if (not #t) 1 (error (quote wrong))))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]
+     [2 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c (if #t 0 (error (quote wrong))))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]))
   (check-mutation/sequence
    #'{(displayln "B")
       (define/contract c any/c 1)
@@ -1020,47 +1006,47 @@ Actual:
       (displayln (quasiquote (c (unquote c))))
       (displayln (quasiquote (d (unquote d))))}
    ;; tries all conditions in sequence,
-   [1 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c
-           (cond [(not #t) 1]
-                 [(foobar (+ 1 2)) -1 5]
-                 [else (error (quote wrong))]))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}]
-   [2 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c
-           (cond [#t 1]
-                 [(not (foobar (+ 1 2))) -1 5]
-                 [else (error (quote wrong))]))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}]
-   ;; then the bodies in sequence
-   [3 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c
-           (cond [#t 0]
-                 [(foobar (+ 1 2)) -1 5]
-                 [else (error (quote wrong))]))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}]
-   [4 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c
-           (cond [#t 1]
-                 [(foobar (+ 1 2)) 1 5]
-                 [else (error (quote wrong))]))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}]
-   [5 #'{(displayln "B")
-         (define/contract c any/c 1)
-         (define/contract d any/c
-           (cond [#t 1]
-                 [(foobar (+ 1 2)) -1 -1]
-                 [else (error (quote wrong))]))
-         (displayln (quasiquote (c (unquote c))))
-         (displayln (quasiquote (d (unquote d))))}])
+   `([1 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [(not #t) 1]
+                    [(foobar (+ 1 2)) -1 5]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]
+     [2 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [#t 1]
+                    [(not (foobar (+ 1 2))) -1 5]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]
+     ;; then the bodies in sequence
+     [3 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [#t 0]
+                    [(foobar (+ 1 2)) -1 5]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]
+     [4 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [#t 1]
+                    [(foobar (+ 1 2)) 1 5]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]
+     [5 ,#'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [#t 1]
+                    [(foobar (+ 1 2)) -1 -1]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}]))
 
 
   ;; lltodo: bug here
@@ -1074,20 +1060,20 @@ Actual:
   (check-mutation/sequence
    #'{(define/contract a any/c (+ (+ 1 2)
                                   (- 3 4)))}
-   [0 #'{(define/contract a any/c (- (+ 1 2)
-                                     (- 3 4)))}]
-   [1 #'{(define/contract a any/c (+ (- 1 2)
-                                     (- 3 4)))}]
-   [2 #'{(define/contract a any/c (+ (+ 0 2)
-                                     (- 3 4)))}]
-   [3 #'{(define/contract a any/c (+ (+ 1 (add1 2))
-                                     (- 3 4)))}]
-   [4 #'{(define/contract a any/c (+ (+ 1 2)
-                                     (+ 3 4)))}]
-   [5 #'{(define/contract a any/c (+ (+ 1 2)
-                                     (- (add1 3) 4)))}]
-   [6 #'{(define/contract a any/c (+ (+ 1 2)
-                                     (- 3 (add1 4))))}])
+   `([0 ,#'{(define/contract a any/c (- (+ 1 2)
+                                        (- 3 4)))}]
+     [1 ,#'{(define/contract a any/c (+ (- 1 2)
+                                        (- 3 4)))}]
+     [2 ,#'{(define/contract a any/c (+ (+ 0 2)
+                                        (- 3 4)))}]
+     [3 ,#'{(define/contract a any/c (+ (+ 1 (add1 2))
+                                        (- 3 4)))}]
+     [4 ,#'{(define/contract a any/c (+ (+ 1 2)
+                                        (+ 3 4)))}]
+     [5 ,#'{(define/contract a any/c (+ (+ 1 2)
+                                        (- (add1 3) 4)))}]
+     [6 ,#'{(define/contract a any/c (+ (+ 1 2)
+                                        (- 3 (add1 4))))}]))
 
   ;; Test the mutator's ability to handle higher order expressions
   ;; 1. The function being applied is an expression
@@ -1095,11 +1081,11 @@ Actual:
   ;;    rather than application ctx
   (check-mutation/sequence
    #'{(define/contract a any/c ((if #t + -) 1 2))}
-   [0 #'{(define/contract a any/c ((if (not #t) + -) 1 2))}]
-   [1 #'{(define/contract a any/c ((if #t - -) 1 2))}]
-   [2 #'{(define/contract a any/c ((if #t + +) 1 2))}]
-   [3 #'{(define/contract a any/c ((if #t + -) 0 2))}]
-   [4 #'{(define/contract a any/c ((if #t + -) 1 (add1 2)))}])
+   `([0 ,#'{(define/contract a any/c ((if (not #t) + -) 1 2))}]
+     [1 ,#'{(define/contract a any/c ((if #t - -) 1 2))}]
+     [2 ,#'{(define/contract a any/c ((if #t + +) 1 2))}]
+     [3 ,#'{(define/contract a any/c ((if #t + -) 0 2))}]
+     [4 ,#'{(define/contract a any/c ((if #t + -) 1 (add1 2)))}]))
 
   (check-mutation
    1
