@@ -278,25 +278,13 @@
       (syntax-parse stx
         ;; begin: statement deletion
         [((~datum begin) e1 e2 ...+)
-         (mdo [count-with (__ counter)]
-              (def begin-stx (maybe-mutate stx
-                                           (syntax/loc stx (begin e2 ...))
-                                           mutation-index
-                                           __))
-              ;; applying both mutations works because of counter tracking!
-              [in (mutate-expr* begin-stx
-                                mutation-index
-                                __)])]
+         (mutate-begin-seq stx (syntax/loc stx
+                                 (begin e2 ...))
+                           mutation-index counter)]
         [((~datum begin0) e1 e2 e3 ...)
-         (mdo [count-with (__ counter)]
-              (def begin-stx (maybe-mutate stx
-                                           (syntax/loc stx (begin0 e1 e3 ...))
-                                           mutation-index
-                                           __))
-              ;; applying both mutations works because of counter tracking!
-              [in (mutate-expr* begin-stx
-                                mutation-index
-                                __)])]
+         (mutate-begin-seq stx (syntax/loc stx
+                                 (begin0 e1 e3 ...))
+                           mutation-index counter)]
 
         ;; conditionals: negate condition, or mutate result exprs
         [((~datum cond) clause ...)
@@ -739,6 +727,17 @@ Actual:
           ,#'[(bool? 5) (foo 7)]
           ,#'[else (bar (+ x 2) #f)])]
      #| ... |#)))
+
+(define (mutate-begin-seq orig-stx new-stx mutation-index counter)
+  (mdo [count-with (__ counter)]
+       (def begin-stx (maybe-mutate orig-stx
+                                    new-stx
+                                    mutation-index
+                                    __))
+       ;; applying both mutations works because of counter tracking!
+       [in (mutate-expr* begin-stx
+                         mutation-index
+                         __)]))
 
 ;; end sequence helpers
 #|----------------------------------------------------------------------|#
@@ -1283,4 +1282,4 @@ Actual:
 ;; 2. [✓] Don't mutate define/override & augment
 ;; 3. [✓] Add swapping order of arguments to funcalls
 ;; 4. [] Move super-new's around in class exprs
-;; 5. [] handle begin0
+;; 5. [✓] handle begin0
