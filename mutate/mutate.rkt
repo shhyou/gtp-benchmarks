@@ -187,21 +187,6 @@
                     mutation-index
                     counter)))
 
-;; swaps
-(define/contract (mutate-arg-pair args mutation-index counter)
-  ((list/c syntax? syntax?) mutation-index? counter? . -> . mutated?)
-
-  (match-define (list arg1 arg2) args)
-  (define unmutated-pair (quasisyntax/loc arg1
-                           (#,arg1 #,arg2)))
-  (if (> counter mutation-index)
-      (mutated unmutated-pair counter)
-      (maybe-mutate unmutated-pair
-                    (quasisyntax/loc arg1
-                      (#,arg2 #,arg1))
-                    mutation-index
-                    counter)))
-
 ;; end mutators
 #|----------------------------------------------------------------------|#
 
@@ -304,18 +289,45 @@
                [return (quasisyntax/loc stx
                          (if #,@(first clause)))])]
 
+        ;; classes
+        ;; Swap init-field initializers
+        [((~or (~and (~datum init-field)
+                     field-type)
+               (~and (~datum field)
+                     field-type))
+          (~or [field-id:id initial-value:expr]
+               no-init-field:id) ...)
+         (define init-value-stxs (syntax-e (syntax/loc stx
+                                             (initial-value ...))))
+         (define field-ids (syntax-e (syntax/loc stx
+                                       (field-id ...))))
+         (mdo [count-with (__ counter)]
+              (def init-values/rearranged
+                (rearrange-in-seq init-value-stxs
+                                  mutation-index
+                                  __))
+              (def init-values/mutated (mutate-in-seq init-values/rearranged
+                                                      mutation-index
+                                                      __
+                                                      mutate-expr))
+              [return (quasisyntax/loc stx
+                        (field-type #,@(map list
+                                            field-ids
+                                            init-values/mutated)
+                                    no-init-field ...))])]
+
         ;; mutate function applications:
         ;; Move around arguments, or mutate argument expressions
         [(f:non-keyword arg ...)
          (define args-stxs (syntax-e (syntax/loc stx (arg ...))))
          (mdo [count-with (__ counter)]
-              (def args/rotated (rotate-app-args args-stxs
-                                                 mutation-index
-                                                 __))
+              (def args/rearranged (rearrange-in-seq args-stxs
+                                                     mutation-index
+                                                     __))
               (def f/mutated (mutate-expr (syntax/loc stx f)
                                           mutation-index
                                           __))
-              (def args/mutated (mutate-in-seq args/rotated
+              (def args/mutated (mutate-in-seq args/rearranged
                                                mutation-index
                                                __
                                                mutate-expr))
@@ -341,7 +353,7 @@
         [return (quasisyntax/loc stx
                   (#,@parts))]))
 
-(define/contract (rotate-app-args args-stxs mutation-index counter)
+(define/contract (rearrange-in-seq args-stxs mutation-index counter)
   ((listof syntax?)
    mutation-index?
    counter?
@@ -357,8 +369,22 @@
   (mdo* (def pairs/swapped (mutate-in-seq pairs
                                           mutation-index
                                           counter
-                                          mutate-arg-pair))
+                                          rearrange-pair))
         [return (unpair-off pairs/swapped remainder)]))
+
+(define/contract (rearrange-pair args mutation-index counter)
+  ((list/c syntax? syntax?) mutation-index? counter? . -> . (mutated/c syntax?))
+
+  (match-define (list arg1 arg2) args)
+  (define unmutated-pair (quasisyntax/loc arg1
+                           (#,arg1 #,arg2)))
+  (if (> counter mutation-index)
+      (mutated unmutated-pair counter)
+      (maybe-mutate unmutated-pair
+                    (quasisyntax/loc arg1
+                      (#,arg2 #,arg1))
+                    mutation-index
+                    counter)))
 
 (define (pair-off lst)
   (for/fold ([paired empty]
@@ -376,22 +402,22 @@
 
 (module+ test
   (check-programs-equal?
-   #`(#,@(mutated-stx (rotate-app-args
+   #`(#,@(mutated-stx (rearrange-in-seq
                        (syntax-e #'(a (+ 1 2)))
                        0 0)))
    #'((+ 1 2) a))
   (check-programs-equal?
-   #`(#,@(mutated-stx (rotate-app-args
+   #`(#,@(mutated-stx (rearrange-in-seq
                        (syntax-e #'(a (+ 1 2) b))
                        0 0)))
    #'((+ 1 2) a b))
   (check-programs-equal?
-   #`(#,@(mutated-stx (rotate-app-args
+   #`(#,@(mutated-stx (rearrange-in-seq
                        (syntax-e #'(a (+ 1 2) b (foo 3)))
                        1 0)))
    #'(a (+ 1 2) (foo 3) b))
   (check-programs-equal?
-   #`(#,@(mutated-stx (rotate-app-args
+   #`(#,@(mutated-stx (rearrange-in-seq
                        (syntax-e #'(a (+ 1 2) b (foo 3) (bar 3 4 5)))
                        2 0)))
    #'(a (+ 1 2) b (foo 3) (bar 3 4 5)))
@@ -1071,6 +1097,15 @@ Actual:
         any/c
         (if (not x) 1 2))})
 
+  ;; function application args swapping
+  (check-mutation/sequence
+   #'{(define/contract x any/c (f 1 2 3 4 5))}
+   `([0 ,#'{(define/contract x any/c (f 2 1 3 4 5))}]
+     [1 ,#'{(define/contract x any/c (f 1 2 4 3 5))}]
+     [2 ,#'{(define/contract x any/c (f 0 2 3 4 5))}]
+     [3 ,#'{(define/contract x any/c (f 1 (add1 2) 3 4 5))}]
+     #| ... |#))
+
 
   ;; Another sequence check on this more complex if program
   (check-mutation/sequence
@@ -1139,6 +1174,7 @@ Actual:
 
 
   ;; classes
+  ;; method visibility
   (check-mutation
    0
    #'{(define/contract c
@@ -1147,7 +1183,71 @@ Actual:
    #'{(define/contract c
         any/c
         (class (define/private (f x) x)))})
-  ;; lltodo: class tests here
+  ;; Initializer swapping
+  (check-mutation/sequence
+   #'{(define/contract c any/c (class (field [v (foo bar)]
+                                             w
+                                             [x 5]
+                                             [a (g 0)]
+                                             y
+                                             [b f]
+                                             [z #f])))}
+   ;; Swap first pair of initializers
+   `([0 ,#'{(define/contract c any/c (class (field [v 5]
+                                                   [x (foo bar)]
+                                                   [a (g 0)]
+                                                   [b f]
+                                                   [z #f]
+                                                   w
+                                                   y)))}]
+     ;; Swap second pair of initializers
+     [1 ,#'{(define/contract c any/c (class (field [v (foo bar)]
+                                                   [x 5]
+                                                   [a f]
+                                                   [b (g 0)]
+                                                   [z #f]
+                                                   w
+                                                   y)))}]
+     ;; Descend into mutating initializer values
+     ;; Note that final odd initializer is NOT swapped
+     [2 ,#'{(define/contract c any/c (class (field [v (foo bar)]
+                                                   [x -1]
+                                                   [a (g 0)]
+                                                   [b f]
+                                                   [z #f]
+                                                   w
+                                                   y)))}]
+     [3 ,#'{(define/contract c any/c (class (field [v (foo bar)]
+                                                   [x 5]
+                                                   [a (g (add1 0))]
+                                                   [b f]
+                                                   [z #f]
+                                                   w
+                                                   y)))}]
+     [4 ,#'{(define/contract c any/c (class (field [v (foo bar)]
+                                                   [x 5]
+                                                   [a (g 0)]
+                                                   [b f]
+                                                   [z (not #f)]
+                                                   w
+                                                   y)))}]))
+  ;; same test with init-field
+  (check-mutation/sequence
+   #'{(define/contract c any/c (class (init-field [v (foo bar)]
+                                                  w
+                                                  [x 5]
+                                                  [a (g 0)]
+                                                  y
+                                                  [b f]
+                                                  [z #f])))}
+   ;; Swap first pair of initializers
+   `([0 ,#'{(define/contract c any/c (class (init-field [v 5]
+                                                        [x (foo bar)]
+                                                        [a (g 0)]
+                                                        [b f]
+                                                        [z #f]
+                                                        w
+                                                        y)))}]))
 
   ;; Test that condition expressions are only ever considered for
   ;; mutation once: to negate them
@@ -1278,7 +1378,7 @@ Actual:
 ;; invocation to enter the "bug" region of the program.
 
 ;; lltodo: change some class mutations
-;; 1. [] Add swapping field initializers
+;; 1. [✓] Add swapping field initializers
 ;; 2. [✓] Don't mutate define/override & augment
 ;; 3. [✓] Add swapping order of arguments to funcalls
 ;; 4. [] Move super-new's around in class exprs
