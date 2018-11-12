@@ -287,6 +287,16 @@
               [in (mutate-expr* begin-stx
                                 mutation-index
                                 __)])]
+        [((~datum begin0) e1 e2 e3 ...)
+         (mdo [count-with (__ counter)]
+              (def begin-stx (maybe-mutate stx
+                                           (syntax/loc stx (begin0 e1 e3 ...))
+                                           mutation-index
+                                           __))
+              ;; applying both mutations works because of counter tracking!
+              [in (mutate-expr* begin-stx
+                                mutation-index
+                                __)])]
 
         ;; conditionals: negate condition, or mutate result exprs
         [((~datum cond) clause ...)
@@ -1033,6 +1043,16 @@ Actual:
         any/c
         (or x #t))
       (define/contract b positive? (begin 2))})
+  (check-mutation
+   3
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin0 1 2))}
+   #'{(define/contract (f x)
+        any/c
+        (or x #t))
+      (define/contract b positive? (begin0 1))})
 
   ;; if
   (check-mutation
