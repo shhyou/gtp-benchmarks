@@ -48,19 +48,23 @@
                    #:blacklist (λ (path)
                                  (equal? path module-to-mutate/file-path)))]
                  [current-namespace (make-base-namespace)])
+    (eval '(require "mutate.rkt"))
     ;; Ensure relative load paths work
     (parameterize
         ([current-directory module-containing-directory]
          [current-load-relative-directory module-containing-directory])
-      (eval '(require "mutate.rkt"))
       ;; Load the mutated module and make it impersonate the original one,
       ;; so that loading the original module loads the mutant instead
       (parameterize ([current-module-declare-name
                       (module-path-resolve module-to-mutate/path)])
         (eval mutant-module-stx)))
 
-    ;; Eval the main module
-    (eval `(require ,main-module-path))))
+    ;; Ensure relative load paths work
+    (parameterize
+        ([current-directory module-containing-directory])
+      ;; Eval the main module
+      (eval `(require ,main-module-path))))
+  mutated-id)
 
 (define/contract (mutant-status run-mutant-thunk)
   ((-> any/c) . -> . (or/c 'completes 'crashes 'index-exceeded))
