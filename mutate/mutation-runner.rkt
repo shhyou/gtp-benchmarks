@@ -33,7 +33,16 @@
             #,@program-stx/mutated)))
       mutated-id)]))
 
-(define (make-mutated-module-runner main-module module-to-mutate mutation-index)
+(define (make-precision-config-module precision-config)
+  #`(module current-precision-setting racket
+      (#%module-begin
+       (provide (for-syntax current-precision-config))
+       (define-for-syntax current-precision-config '#,precision-config))))
+
+(define (make-mutated-module-runner main-module
+                                    module-to-mutate
+                                    mutation-index
+                                    ctc-precision-config)
   (define main-module-path `(file ,main-module))
   (define module-to-mutate/path `(file ,module-to-mutate))
   (define module-to-mutate/file-path (module-path->path module-to-mutate/path))
@@ -41,6 +50,15 @@
     (split-path module-to-mutate/file-path))
   (define-values (mutant-module-stx mutated-id)
     (mutate-module module-to-mutate/file-path mutation-index))
+
+  (define precision-config/path
+    '(file "../ctcs/current-precision-setting.rkt"))
+  (define precision-config/file-path
+    (module-path->path precision-config/path))
+  (define-values (precision-config-containing-directory __1 __2)
+    (split-path precision-config/file-path))
+  (define precision-config/stx
+    (make-precision-config-module ctc-precision-config))
 
   ;; Make racket/contract come from the same namespace so that
   ;; we can inspect contract violations thrown inside eval
@@ -53,10 +71,26 @@
     (parameterize ([current-load/use-compiled
                     ;; Prevent loading from bytecode to ensure mutant is loaded
                     (make-custom-load/use-compiled
-                     #:blacklist (λ (path)
-                                   (equal? path module-to-mutate/file-path)))]
+                     #:blacklist (curryr member
+                                         (list module-to-mutate/file-path
+                                               precision-config/file-path)))]
                    [current-namespace ns])
       (eval '(require "mutate.rkt"))
+
+      ;; Load the precision config make it impersonate the original
+      ;; one, so that loading the original module loads the above
+      ;; constructed config instead
+      (parameterize
+          ([current-load-relative-directory
+            precision-config-containing-directory]
+           ;; Note that this needs to be resolved *before*
+           ;; parameterizing current-directory otherwise relative module
+           ;; paths get messed up.
+           [current-module-declare-name
+            (module-path-resolve precision-config/path)]
+           ;; Ensure relative load paths work
+           [current-directory precision-config-containing-directory])
+        (eval precision-config/stx))
 
       ;; Load the mutated module and make it impersonate the original
       ;; one, so that loading the original module loads the mutant
@@ -83,14 +117,16 @@
 (struct run-status (outcome blamed mutated-id) #:transparent)
 (define (run-with-mutated-module main-module
                                  module-to-mutate
-                                 mutation-index)
+                                 mutation-index
+                                 ctc-precision-config)
   (with-handlers ([mutation-index-exception?
                    (λ (e) (run-status 'index-exceeded
                                       #f #f))])
     (define-values (run mutated-id)
       (make-mutated-module-runner main-module
                                   module-to-mutate
-                                  mutation-index))
+                                  mutation-index
+                                  ctc-precision-config))
     (with-handlers ([exn:fail:contract:blame?
                      (λ (be)
                        (run-status 'blamed
@@ -99,7 +135,7 @@
                                    mutated-id))]
                     [exn? (λ (e)
                             (run-status 'crashed
-                                        #f
+                                        e
                                         mutated-id))])
       (begin
         (run)
