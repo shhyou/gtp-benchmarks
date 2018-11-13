@@ -33,7 +33,7 @@
             #,@program-stx/mutated)))
       mutated-id)]))
 
-(define (run-with-mutated-module main-module module-to-mutate mutation-index)
+(define (make-mutated-module-runner main-module module-to-mutate mutation-index)
   (define main-module-path `(file ,main-module))
   (define module-to-mutate/path `(file ,module-to-mutate))
   (define module-to-mutate/file-path (module-path->path module-to-mutate/path))
@@ -42,50 +42,78 @@
   (define-values (mutant-module-stx mutated-id)
     (mutate-module module-to-mutate/file-path mutation-index))
 
-  (parameterize ([current-load/use-compiled
-                  ;; Prevent loading from bytecode to ensure mutant is loaded
-                  (make-custom-load/use-compiled
-                   #:blacklist (λ (path)
-                                 (equal? path module-to-mutate/file-path)))]
-                 [current-namespace (make-base-namespace)])
-    (eval '(require "mutate.rkt"))
+  ;; Make racket/contract come from the same namespace so that
+  ;; we can inspect contract violations thrown inside eval
+  (define ns (make-base-namespace))
+  (namespace-attach-module (current-namespace)
+                           'racket/contract
+                           ns)
 
-    ;; Load the mutated module and make it impersonate the original
-    ;; one, so that loading the original module loads the mutant
-    ;; instead
-    (parameterize
-        ([current-load-relative-directory module-containing-directory]
-         ;; Note that this needs to be resolved *before*
-         ;; parameterizing current-directory otherwise relative module
-         ;; paths get messed up.
-         [current-module-declare-name
-          (module-path-resolve module-to-mutate/path)]
-         ;; Ensure relative load paths work
-         [current-directory module-containing-directory])
-      (eval mutant-module-stx))
+  (define (run)
+    (parameterize ([current-load/use-compiled
+                    ;; Prevent loading from bytecode to ensure mutant is loaded
+                    (make-custom-load/use-compiled
+                     #:blacklist (λ (path)
+                                   (equal? path module-to-mutate/file-path)))]
+                   [current-namespace ns])
+      (eval '(require "mutate.rkt"))
 
-    ;; Ensure relative load paths work
-    (parameterize
-        ([current-directory module-containing-directory])
-      ;; Eval the main module
-      (eval `(require ,main-module-path))))
-  mutated-id)
+      ;; Load the mutated module and make it impersonate the original
+      ;; one, so that loading the original module loads the mutant
+      ;; instead
+      (parameterize
+          ([current-load-relative-directory module-containing-directory]
+           ;; Note that this needs to be resolved *before*
+           ;; parameterizing current-directory otherwise relative module
+           ;; paths get messed up.
+           [current-module-declare-name
+            (module-path-resolve module-to-mutate/path)]
+           ;; Ensure relative load paths work
+           [current-directory module-containing-directory])
+        (eval mutant-module-stx))
 
-(define/contract (mutant-status run-mutant-thunk)
-  ((-> any/c) . -> . (or/c 'completes 'crashes 'index-exceeded))
+      ;; Ensure relative load paths work
+      (parameterize
+          ([current-directory module-containing-directory])
+        ;; Eval the main module
+        (eval `(require ,main-module-path)))))
 
+  (values run mutated-id))
+
+(struct run-status (outcome blamed mutated-id) #:transparent)
+(define (run-with-mutated-module main-module
+                                 module-to-mutate
+                                 mutation-index)
   (with-handlers ([mutation-index-exception?
-                   (λ (e) 'index-exceeded)]
-                  [exn? (λ (e) 'crashes)])
-    (begin
-      (run-mutant-thunk)
-      'completes)))
+                   (λ (e) (run-status 'index-exceeded
+                                      #f #f))])
+    (define-values (run mutated-id)
+      (make-mutated-module-runner main-module
+                                  module-to-mutate
+                                  mutation-index))
+    (with-handlers ([exn:fail:contract:blame?
+                     (λ (be)
+                       (run-status 'blamed
+                                   (blame-positive
+                                    (exn:fail:contract:blame-object be))
+                                   mutated-id))]
+                    [exn? (λ (e)
+                            (run-status 'crashed
+                                        #f
+                                        mutated-id))])
+      (begin
+        (run)
+        (run-status 'completed
+                    #f
+                    mutated-id)))))
 
 ;; note: stack grows down ⇓
 ;;
 ;; lltodo: wiw: write a function that will run all mutants possible to
 ;; generate for a set of modules.
+
 ;; Note that this function needs to also tweak the ctc strength
+
 
 ;; for debugging
 (define (print-mutation module-to-mutate mutation-index)
