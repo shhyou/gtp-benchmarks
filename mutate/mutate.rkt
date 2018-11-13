@@ -2,11 +2,16 @@
 
 (provide
  (contract-out
+  [rename mutate-program-wrapper*
+          mutate-program/with-id
+          ;; note: result may be unchanged!
+          (syntax? natural? . -> . mutated-program?)]
   [rename mutate-program-wrapper
           mutate-program
           ;; note: result may be unchanged!
           (syntax? natural? . -> . syntax?)])
- mutation-index-exception?)
+ mutation-index-exception?
+ (struct-out mutated-program))
 
 (require (for-syntax syntax/parse)
          syntax/parse
@@ -42,9 +47,11 @@
 #|----------------------------------------------------------------------|#
 ;; Utilities
 
-;; Manages the decision of whether or not to apply a ready, valid
-;; mutation based on `mutation-index` and `counter`.
-;; Assumes that `old-stx` and `new-stx` are different.
+;; Base mutator: all mutation happens through this function
+;;
+;; Manages the decision of whether or not to apply a mutation based on
+;; `mutation-index` and `counter`. Assumes that `old-stx` and
+;; `new-stx` are different (ie they represent a real mutation).
 (define/contract (maybe-mutate old-stx new-stx mutation-index counter)
   (->i ([old-stx syntax?]
         [new-stx (old-stx)
@@ -360,11 +367,6 @@
    . -> .
    (mutated/c (listof syntax?)))
 
-  ;; idea: in order to re-use mutate-in-seq
-  ;; partition args-stxs into list of pairs of args
-  ;; and use mutate-in-seq on that with a mutator that swaps the two args
-  ;;
-  ;; Use maybe-mutate
   (define-values (pairs remainder) (pair-off args-stxs))
   (mdo* (def pairs/swapped (mutate-in-seq pairs
                                           mutation-index
@@ -425,7 +427,6 @@
 
 
 
-
 ;; Note: distinction between mutate-program and mutate-expr
 ;; is necessary because mutate-program should descend only into
 ;; contracted top level forms, while mutate-expr can descend into
@@ -434,7 +435,7 @@
   ((syntax? mutation-index?)
    (counter?)
    . ->* .
-   mutated?)
+   (mutated/c mutated-program?))
 
   (if (and make-mutants
            (<= counter mutation-index))
@@ -445,34 +446,51 @@
          (define body-stxs (syntax-e (syntax/loc stx
                                        (def.body ...))))
          (mdo [count-with (__ counter)]
-              (def body-forms (mutate-in-seq body-stxs
-                                             mutation-index
-                                             __
-                                             mutate-expr))
-              (def program-rest (mutate-program (syntax/loc stx (e ...))
-                                                mutation-index
-                                                __))
-              [return (quasisyntax/loc stx
-                        ((define/contract def.id/sig def.ctc
-                           #,@body-forms)
-                         #,@program-rest))])]
+              (def body-stxs/mutated (mutate-in-seq body-stxs
+                                                    mutation-index
+                                                    __
+                                                    mutate-expr))
+              (def/value body-stxs-mutated?
+                (mutation-applied-already? mutation-index __))
+              (def (mutated-program program-rest mutated-fn-in-rest)
+                (mutate-program (syntax/loc stx (e ...))
+                                mutation-index
+                                __))
+              [return
+               (mutated-program
+                (quasisyntax/loc stx
+                  ((define/contract def.id/sig def.ctc
+                     #,@body-stxs/mutated)
+                   #,@program-rest))
+                (if body-stxs-mutated?
+                    (first (flatten (syntax->datum #'(def.id/sig))))
+                    mutated-fn-in-rest))])]
 
         ;; Ignore anything else
         [(other-e e ...)
-         (mdo* (def rest-stxs (mutate-program (syntax/loc stx (e ...))
-                                              mutation-index
-                                              counter))
-               [return (quasisyntax/loc stx
-                         (other-e #,@rest-stxs))])]
+         (mdo* (def (mutated-program rest-stxs mutated-fn-in-rest)
+                 (mutate-program (syntax/loc stx (e ...))
+                                 mutation-index
+                                 counter))
+               [return
+                (mutated-program
+                 (quasisyntax/loc stx
+                   (other-e #,@rest-stxs))
+                 mutated-fn-in-rest)])]
         [()
          ;; signal no more mutations in this module
          (raise (mutation-index-exception))])
 
-      (mutated stx counter)))
+      (mutated (mutated-program stx #f) counter)))
 
 ;; mutate-program-wrapper: syntax? natural? -> syntax?
 (define (mutate-program-wrapper stx mutation-index)
-  (match-define (mutated p _) (mutate-program stx mutation-index))
+  (match-define (mutated-program p f)
+    (mutate-program-wrapper* stx mutation-index))
+  p)
+
+(define (mutate-program-wrapper* stx mutation-index)
+  (match-define (mutated p c) (mutate-program stx mutation-index))
   p)
 
 ;; end syntax traversers
@@ -1371,15 +1389,377 @@ Actual:
    #'{(define (foo x) x)
       (define/contract a any/c (+ (foo 1) 2))}
    #'{(define (foo x) x)
-      (define/contract a any/c (+ (foo 0) 2))}))
+      (define/contract a any/c (+ (foo 0) 2))})
+
+  ;; Test mutated id reporting
+  (check-equal?
+   (mutated-program-mutated-id
+    (mutate-program-wrapper*
+     #'{(define/contract (f x)
+          any/c
+          (<= x 2))
+        (define/contract b positive? 2)}
+     2))
+   'f)
+  (check-equal?
+   (mutated-program-mutated-id
+    (mutate-program-wrapper*
+     #'{(define/contract (f x)
+          any/c
+          (<= x 2))
+        (define/contract b positive? 2)}
+     3))
+   'b)
+  (check-equal?
+   (mutated-program-mutated-id
+    (mutate-program-wrapper*
+     #'{(displayln "B")
+            (define/contract c any/c 1)
+            (define/contract d any/c
+              (cond [#t 1]
+                    [(not (foobar (+ 1 2))) -1 5]
+                    [else (error (quote wrong))]))
+            (displayln (quasiquote (c (unquote c))))
+            (displayln (quasiquote (d (unquote d))))}
+     2))
+   'd)
+
+  ;; Tests on snippets from the actual benchmarks
+  (check-mutation/sequence
+   #'{(define/contract b positive? 2)
+                (define/contract (singleton-list? x)
+                  (configurable-ctc)
+
+                  (and (list? x)
+                       (not (null? x))
+                       (null? (cdr x))))}
+   `([1 ,#'{(define/contract b positive? 2)
+            (define/contract (singleton-list? x)
+              (configurable-ctc)
+
+              (and (not (null? x))
+                   (list? x)
+                   (null? (cdr x))))}]
+     [2 ,#'{(define/contract b positive? 2)
+            (define/contract (singleton-list? x)
+              (configurable-ctc)
+
+              (or (list? x)
+                  (not (null? x))
+                  (null? (cdr x))))}]))
+
+  (check-mutation/sequence
+   #'{(provide
+       command%
+       CMD*
+       )
+
+      (require
+       racket/match
+       racket/class
+       (only-in racket/string string-join string-split)
+       (for-syntax racket/base racket/syntax syntax/parse)
+       racket/contract
+       "../../../ctcs/precision-config.rkt"
+       (only-in racket/function curry)
+       (only-in racket/list empty? first second rest)
+       (only-in "../../../ctcs/common.rkt"
+                class/c*
+                or-#f/c
+                command%/c
+                command%?
+                command%?-with-exec
+                stack?
+                env?
+                list-with-min-size/c
+                equal?/c)
+       )
+      (require (only-in "stack.rkt"
+                        stack-drop
+                        stack-dup
+                        stack-init
+                        stack-over
+                        stack-pop
+                        stack-push
+                        stack-swap
+                        ))
+
+      (define (assert v p)
+        (unless (p v) (error 'assert))
+        v)
+
+
+      (define/contract command%
+        command%/c
+        (class object%
+          (super-new)
+          (init-field
+           id
+           descr
+           exec)))
+
+      (define ((env-with/c cmd-ids) env)
+        (cond [(env? env)
+               (define env-cmd-ids
+                 (for/list ([env-cmd (in-list env)])
+                   (get-field id env-cmd)))
+               (for/and ([c (in-list cmd-ids)])
+                 (member c env-cmd-ids))]
+              [else #f]))
+
+
+
+      ;; True if the argument is a list with one element
+      (define/contract (singleton-list? x)
+        (configurable-ctc
+         [max (->i ([x list?])
+                   [result (x) (if (empty? x)
+                                   #f
+                                   (empty? (rest x)))])]
+         [types (list? . -> . boolean?)])
+
+        (and (list? x)
+             (not (null? x))
+             (null? (cdr x))))}
+   `([0 ,#'{(provide
+             command%
+             CMD*
+             )
+
+            (require
+             racket/match
+             racket/class
+             (only-in racket/string string-join string-split)
+             (for-syntax racket/base racket/syntax syntax/parse)
+             racket/contract
+             "../../../ctcs/precision-config.rkt"
+             (only-in racket/function curry)
+             (only-in racket/list empty? first second rest)
+             (only-in "../../../ctcs/common.rkt"
+                      class/c*
+                      or-#f/c
+                      command%/c
+                      command%?
+                      command%?-with-exec
+                      stack?
+                      env?
+                      list-with-min-size/c
+                      equal?/c)
+             )
+            (require (only-in "stack.rkt"
+                              stack-drop
+                              stack-dup
+                              stack-init
+                              stack-over
+                              stack-pop
+                              stack-push
+                              stack-swap
+                              ))
+
+            (define (assert v p)
+              (unless (p v) (error 'assert))
+              v)
+
+            (define/contract command%
+              command%/c
+              (class object%
+                (super-new)
+                (init-field
+                 id
+                 descr
+                 exec)))
+
+            (define ((env-with/c cmd-ids) env)
+              (cond [(env? env)
+                     (define env-cmd-ids
+                       (for/list ([env-cmd (in-list env)])
+                         (get-field id env-cmd)))
+                     (for/and ([c (in-list cmd-ids)])
+                       (member c env-cmd-ids))]
+                    [else #f]))
+
+
+
+            ;; True if the argument is a list with one element
+            (define/contract (singleton-list? x)
+              (configurable-ctc
+               [max (->i ([x list?])
+                         [result (x) (if (empty? x)
+                                         #f
+                                         (empty? (rest x)))])]
+               [types (list? . -> . boolean?)])
+
+              (and (not (null? x))
+                   (list? x)
+                   (null? (cdr x))))}]
+     [1 ,#'{(provide
+             command%
+             CMD*
+             )
+
+            (require
+             racket/match
+             racket/class
+             (only-in racket/string string-join string-split)
+             (for-syntax racket/base racket/syntax syntax/parse)
+             racket/contract
+             "../../../ctcs/precision-config.rkt"
+             (only-in racket/function curry)
+             (only-in racket/list empty? first second rest)
+             (only-in "../../../ctcs/common.rkt"
+                      class/c*
+                      or-#f/c
+                      command%/c
+                      command%?
+                      command%?-with-exec
+                      stack?
+                      env?
+                      list-with-min-size/c
+                      equal?/c)
+             )
+            (require (only-in "stack.rkt"
+                              stack-drop
+                              stack-dup
+                              stack-init
+                              stack-over
+                              stack-pop
+                              stack-push
+                              stack-swap
+                              ))
+
+            (define (assert v p)
+              (unless (p v) (error 'assert))
+              v)
+
+            (define/contract command%
+              command%/c
+              (class object%
+                (super-new)
+                (init-field
+                 id
+                 descr
+                 exec)))
+
+            (define ((env-with/c cmd-ids) env)
+              (cond [(env? env)
+                     (define env-cmd-ids
+                       (for/list ([env-cmd (in-list env)])
+                         (get-field id env-cmd)))
+                     (for/and ([c (in-list cmd-ids)])
+                       (member c env-cmd-ids))]
+                    [else #f]))
+
+
+
+            ;; True if the argument is a list with one element
+            (define/contract (singleton-list? x)
+              (configurable-ctc
+               [max (->i ([x list?])
+                         [result (x) (if (empty? x)
+                                         #f
+                                         (empty? (rest x)))])]
+               [types (list? . -> . boolean?)])
+
+              (or (list? x)
+                  (not (null? x))
+                  (null? (cdr x))))}]))
+
+  (check-equal?
+   (mutated-program-mutated-id
+    (mutate-program-wrapper*
+     #'{(provide
+       command%
+       CMD*
+       )
+
+      (require
+       racket/match
+       racket/class
+       (only-in racket/string string-join string-split)
+       (for-syntax racket/base racket/syntax syntax/parse)
+       racket/contract
+       "../../../ctcs/precision-config.rkt"
+       (only-in racket/function curry)
+       (only-in racket/list empty? first second rest)
+       (only-in "../../../ctcs/common.rkt"
+                class/c*
+                or-#f/c
+                command%/c
+                command%?
+                command%?-with-exec
+                stack?
+                env?
+                list-with-min-size/c
+                equal?/c)
+       )
+      (require (only-in "stack.rkt"
+                        stack-drop
+                        stack-dup
+                        stack-init
+                        stack-over
+                        stack-pop
+                        stack-push
+                        stack-swap
+                        ))
+
+      (define (assert v p)
+        (unless (p v) (error 'assert))
+        v)
+
+
+      (define/contract command%
+        command%/c
+        (class object%
+          (super-new)
+          (init-field
+           id
+           descr
+           exec)))
+
+      (define ((env-with/c cmd-ids) env)
+        (cond [(env? env)
+               (define env-cmd-ids
+                 (for/list ([env-cmd (in-list env)])
+                   (get-field id env-cmd)))
+               (for/and ([c (in-list cmd-ids)])
+                 (member c env-cmd-ids))]
+              [else #f]))
+
+
+
+      ;; True if the argument is a list with one element
+      (define/contract (singleton-list? x)
+        (configurable-ctc
+         [max (->i ([x list?])
+                   [result (x) (if (empty? x)
+                                   #f
+                                   (empty? (rest x)))])]
+         [types (list? . -> . boolean?)])
+
+        (and (list? x)
+             (not (null? x))
+             (null? (cdr x))))}
+     1))
+   'singleton-list?))
 
 ;; lltodo: wiw:
-;; lltodo: also, still need to make the mutate functions insert the
-;; invocation to enter the "bug" region of the program.
+;;
+;; lltodo: need to find a way to record or annotate somehow the "bug"
+;; region of the program.
+;;
+;; Idea: have my mutate-program function set a parameter for the
+;; current region that the mutation function can refer to and somehow flag?
+;;
+;; ⟶ Better idea: just have the mutate-program function inspect the
+;; mutated result to determine if the mutation happened inside a given
+;; definition (ie region) -- it can know when counter >= mutation-index
+;;
+;; Is this good enough? Question is if we want region-level
+;; granularity for determining where the bug is or finer than that.
+;; Upon a moments reflection I think that region based granularity
+;; makes the most sense, since that is the level at which blame
+;; operates.
 
-;; lltodo: change some class mutations
-;; 1. [✓] Add swapping field initializers
-;; 2. [✓] Don't mutate define/override & augment
-;; 3. [✓] Add swapping order of arguments to funcalls
-;; 4. [] Move super-new's around in class exprs
-;; 5. [✓] handle begin0
+
+;; Potential mutations that have been deferred:
+;; - Moving occurrences of (super-new) around in class body

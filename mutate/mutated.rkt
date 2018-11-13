@@ -7,7 +7,9 @@
          mbind
          mdo
          mdo*
-         (struct-out mutated))
+         (struct-out mutated)
+         (struct-out mutated-program)
+         mutation-applied-already?)
 
 (require (for-syntax syntax/parse))
 
@@ -51,13 +53,19 @@
 ;; counter
 (define-syntax (mdo stx)
   (syntax-parse stx
-    #:datum-literals (count-with def return in)
+    #:datum-literals (count-with def return in def/value)
     [(_ [count-with (counter-id:id current-value:expr)]
-        (def bound-id:id m-expr:expr)
+        (def bound-id:expr m-expr:expr)
         more-clauses ...+)
      #'(match-let* ([counter-id current-value]
                     [(mutated bound-id counter-id) m-expr])
          (mdo [count-with (counter-id counter-id)]
+              more-clauses ...))]
+    [(_ [count-with (counter-id:id current-value:expr)]
+        (def/value bound-id:expr non-m-expr:expr)
+        more-clauses ...+)
+     #'(match-let* ([bound-id non-m-expr])
+         (mdo [count-with (counter-id current-value)]
               more-clauses ...))]
     ;; return <=> mmap
     [(_ [count-with (counter-id:id current-value:expr)]
@@ -70,6 +78,7 @@
      #'m-expr]))
 
 ;; bind version that shows more clearly how this is similar to monadic do
+;; but it doesn't simply support pattern matching for id like above..
 #;(define-syntax (mdo stx)
   (syntax-parse stx
     #:datum-literals (count-with def return in)
@@ -96,3 +105,7 @@
        def-clause
        result-clause))
 
+(struct mutated-program (stx mutated-id) #:transparent)
+
+(define (mutation-applied-already? mutation-index counter)
+  (> counter mutation-index))

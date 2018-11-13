@@ -23,10 +23,15 @@
   (syntax-parse (read-module module-file-path)
     #:datum-literals [module #%module-begin]
     [(module name lang (#%module-begin body ...))
-     (strip-context
-      #`(module name lang
-          (#%module-begin
-           #,@(mutate-program #'(body ...) mutation-index))))]))
+     (define program-stx #'{body ...})
+     (match-define (mutated-program program-stx/mutated mutated-id)
+       (mutate-program/with-id program-stx mutation-index))
+     (values
+      (strip-context
+       #`(module name lang
+           (#%module-begin
+            #,@program-stx/mutated)))
+      mutated-id)]))
 
 (define (run-with-mutated-module main-module module-to-mutate mutation-index)
   (define main-module-path `(file ,main-module))
@@ -34,8 +39,8 @@
   (define module-to-mutate/file-path (module-path->path module-to-mutate/path))
   (define-values (module-containing-directory _1 _2)
     (split-path module-to-mutate/file-path))
-  (define mutant-module-stx (mutate-module module-to-mutate/file-path
-                                           mutation-index))
+  (define-values (mutant-module-stx mutated-id)
+    (mutate-module module-to-mutate/file-path mutation-index))
 
   (parameterize ([current-load/use-compiled
                   ;; Prevent loading from bytecode to ensure mutant is loaded
@@ -67,5 +72,18 @@
       (run-mutant-thunk)
       'completes)))
 
-;; lltodo: write a function that will run all mutants possible to
+;; note: stack grows down ⇓
+;;
+;; lltodo: wiw: write a function that will run all mutants possible to
 ;; generate for a set of modules.
+;; Note that this function needs to also tweak the ctc strength
+
+;; for debugging
+(define (print-mutation module-to-mutate mutation-index)
+  (define-values (mutated-program-stx mutated-id)
+    (mutate-module module-to-mutate mutation-index))
+  (printf "--------------------\nMutated: ~a\n\n"
+          mutated-id)
+  (pretty-print (syntax->datum mutated-program-stx)))
+
+
