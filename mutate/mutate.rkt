@@ -89,7 +89,7 @@
          (if (and make-mutants
                   (<= counter mutation-index))
              (syntax-parse stx-name
-               #:literals (orig ... left ... right ...)
+               #:datum-literals (orig ... left ... right ...)
                [orig
                 (maybe-mutate* (syntax/loc stx-name new))]
                ...
@@ -244,6 +244,9 @@
                       (~datum ==)
                       (~datum begin0)
                       (~datum let)
+                      (~datum let*)
+                      (~datum let-values)
+                      (~datum let*-values)
                       (~datum set!)
                       (~datum define-syntax-rule)
                       (~datum for)
