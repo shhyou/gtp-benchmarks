@@ -5,7 +5,8 @@
          (only-in syntax/modresolve [resolve-module-path module-path->path])
          syntax/parse
          syntax/strip-context
-         "mutate.rkt")
+         "mutate.rkt"
+         "../ctcs/current-precision-setting.rkt")
 
 (define (module-path-resolve mod-path [load? #f])
   ((current-module-name-resolver) mod-path #f #f load?))
@@ -36,8 +37,10 @@
 (define (make-precision-config-module precision-config)
   #`(module current-precision-setting racket
       (#%module-begin
-       (provide (for-syntax current-precision-config))
-       (define-for-syntax current-precision-config '#,precision-config))))
+       (provide current-precision-config
+                precision-configs)
+       (define precision-configs '(none types max))
+       (define current-precision-config '#,precision-config))))
 
 (define (make-mutated-module-runner main-module
                                     module-to-mutate
@@ -114,14 +117,50 @@
 
   (values run mutated-id))
 
-(struct run-status (outcome blamed mutated-id) #:transparent)
+(struct run-status (outcome blamed
+                            mutated-module mutated-id
+                            ctc-precision index)
+  #:transparent)
+;; run-status -> bool
+(define (index-exceeded? rs)
+  (equal? (run-status-outcome rs) 'index-exceeded))
+
+
+(define report-progress (make-parameter #f))
+
+;; run-status -> void
+(define (report-run-status rs)
+  (printf "
+Run: mutated ~a in module ~a
+with precision ~a, index ~a
+Status: ~a
+Blamed: ~a
+
+"
+          (run-status-mutated-id rs)
+          (run-status-mutated-module rs)
+          (run-status-ctc-precision rs)
+          (run-status-index rs)
+          (run-status-outcome rs)
+          (run-status-blamed rs)))
+
+
+
 (define (run-with-mutated-module main-module
                                  module-to-mutate
                                  mutation-index
-                                 ctc-precision-config)
+                                 ctc-precision-config
+                                 #:suppress-output? [suppress-output? #f]
+                                 #:timeout-secs [timeout-secs (* 3 60)])
+  (define (make-status status-sym [blamed #f] [mutated-id #f])
+    (run-status status-sym
+                blamed
+                module-to-mutate
+                mutated-id
+                ctc-precision-config
+                mutation-index))
   (with-handlers ([mutation-index-exception?
-                   (λ (e) (run-status 'index-exceeded
-                                      #f #f))])
+                   (λ (e) (make-status 'index-exceeded))])
     (define-values (run mutated-id)
       (make-mutated-module-runner main-module
                                   module-to-mutate
@@ -129,26 +168,72 @@
                                   ctc-precision-config))
     (with-handlers ([exn:fail:contract:blame?
                      (λ (be)
-                       (run-status 'blamed
-                                   (blame-positive
-                                    (exn:fail:contract:blame-object be))
-                                   mutated-id))]
+                       (make-status 'blamed
+                                    (blame-positive
+                                     (exn:fail:contract:blame-object be))
+                                    mutated-id))]
                     [exn? (λ (e)
-                            (run-status 'crashed
-                                        e
-                                        mutated-id))])
+                            (make-status 'crashed
+                                         e
+                                         mutated-id))])
       (begin
-        (run)
-        (run-status 'completed
-                    #f
-                    mutated-id)))))
+        (make-status (if (run/managed run timeout-secs suppress-output?)
+                         'completed
+                         'timeout/oom)
+                     #f
+                     mutated-id)))))
 
-;; note: stack grows down ⇓
-;;
-;; lltodo: wiw: write a function that will run all mutants possible to
-;; generate for a set of modules.
+;; returns #t if completed without timing out or oom
+(define (run/managed run-thunk timeout-secs suppress-output?)
+  (parameterize ([current-output-port (if suppress-output?
+                                          (open-output-nowhere)
+                                          (current-output-port))]
+                 [current-custodian (make-custodian)])
+    ;; lltodo: need to indicate if the program was killed due to oom.
+    ;; Currently it is considered 'completed, but I'd like it to go
+    ;; into 'timeout/oom.
+    (custodian-limit-memory (current-custodian)
+                            (* 3 (expt 10 9)))
+    (define thd (thread run-thunk))
+    (begin0
+        (sync/timeout/enable-break timeout-secs
+                                   thd)
+      (kill-thread thd))))
 
-;; Note that this function needs to also tweak the ctc strength
+(define/contract (run-all-mutants/of-module main-module
+                                            module-to-mutate
+                                            [index-so-far 0]
+                                            [results-so-far empty])
+  (string? string? . -> . (listof run-status?))
+
+  (define results/this-index
+    (for*/list ([ctc-precision precision-configs])
+      (when (report-progress)
+        (displayln "."))
+      (run-with-mutated-module main-module
+                               module-to-mutate
+                               index-so-far
+                               ctc-precision
+                               #:suppress-output? #t)))
+  (cond [(index-exceeded? (first results/this-index))
+         (flatten (reverse results-so-far))]
+        [else
+         (when (report-progress)
+           (displayln "-------------------------")
+           (for-each report-run-status results/this-index)
+           (displayln "-------------------------"))
+         (run-all-mutants/of-module main-module
+                                    module-to-mutate
+                                    (add1 index-so-far)
+                                    (cons results/this-index
+                                          results-so-far))]))
+
+(define/contract (run-all-mutants/with-modules main-module
+                                               mutatable-modules)
+  (string? (listof string?) . -> . (listof run-status?))
+
+  (flatten (map (curry run-all-mutants/of-module main-module)
+                mutatable-modules)))
 
 
 ;; for debugging

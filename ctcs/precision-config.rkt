@@ -7,13 +7,10 @@
                               curryr))
          racket/contract
          (only-in racket/function curry)
-         (only-in racket/match match))
+         (only-in racket/match match)
+         (for-syntax "current-precision-setting.rkt"))
 
 (provide configurable-ctc)
-
-(define-for-syntax precision-configs '(none types max))
-;; Must be a member of ^; modify to change all configurable-ctc precision levels
-(define-for-syntax current-precision-config 'max)
 
 ;; Usage:
 ;; (configurable-ctc [<unquoted-precision-config> contract?] ...)
