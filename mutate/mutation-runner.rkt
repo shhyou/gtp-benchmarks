@@ -6,7 +6,8 @@
          syntax/parse
          syntax/strip-context
          "mutate.rkt"
-         "../ctcs/current-precision-setting.rkt")
+         "../ctcs/current-precision-setting.rkt"
+         "sandbox-runner.rkt")
 
 (define (module-path-resolve mod-path [load? #f])
   ((current-module-name-resolver) mod-path #f #f load?))
@@ -80,7 +81,7 @@
                    [current-namespace ns])
       (eval '(require "mutate.rkt"))
 
-      ;; Load the precision config make it impersonate the original
+      ;; load the precision config make it impersonate the original
       ;; one, so that loading the original module loads the above
       ;; constructed config instead
       (parameterize
@@ -150,8 +151,9 @@ Blamed: ~a
                                  module-to-mutate
                                  mutation-index
                                  ctc-precision-config
-                                 #:suppress-output? [suppress-output? #f]
-                                 #:timeout-secs [timeout-secs (* 3 60)])
+                                 #:suppress-output? [suppress-output? #t]
+                                 #:timeout/s [timeout/s (* 3 60)]
+                                 #:memory/gb [memory/gb 3])
   (define (make-status status-sym [blamed #f] [mutated-id #f])
     (run-status status-sym
                 blamed
@@ -166,39 +168,25 @@ Blamed: ~a
                                   module-to-mutate
                                   mutation-index
                                   ctc-precision-config))
-    (with-handlers ([exn:fail:contract:blame?
-                     (λ (be)
-                       (make-status 'blamed
-                                    (blame-positive
-                                     (exn:fail:contract:blame-object be))
-                                    mutated-id))]
-                    [exn? (λ (e)
-                            (make-status 'crashed
-                                         e
-                                         mutated-id))])
-      (begin
-        (make-status (if (run/managed run timeout-secs suppress-output?)
-                         'completed
-                         'timeout/oom)
-                     #f
-                     mutated-id)))))
-
-;; returns #t if completed without timing out or oom
-(define (run/managed run-thunk timeout-secs suppress-output?)
-  (parameterize ([current-output-port (if suppress-output?
-                                          (open-output-nowhere)
-                                          (current-output-port))]
-                 [current-custodian (make-custodian)])
-    ;; lltodo: need to indicate if the program was killed due to oom.
-    ;; Currently it is considered 'completed, but I'd like it to go
-    ;; into 'timeout/oom.
-    (custodian-limit-memory (current-custodian)
-                            (* 3 (expt 10 9)))
-    (define thd (thread run-thunk))
-    (begin0
-        (sync/timeout/enable-break timeout-secs
-                                   thd)
-      (kill-thread thd))))
+    (define (make-status* status-sym [blamed #f])
+      (make-status status-sym blamed mutated-id))
+    (define run/handled
+      (λ _
+        (with-handlers
+          ([exn:fail:contract:blame? (compose
+                                      (curry make-status* 'blamed)
+                                      blame-positive
+                                      exn:fail:contract:blame-object)]
+           [exn:fail:out-of-memory? (curry make-status* 'oom)]
+           [exn? (curry make-status* 'crashed)])
+          (run)
+          (make-status* 'completed))))
+    (run-with-limits run/handled
+                     #:timeout/s timeout/s
+                     #:timeout-result (make-status* 'timeout)
+                     #:memory/gb memory/gb
+                     #:oom-result (make-status* 'oom)
+                     #:suppress-output? suppress-output?)))
 
 (define/contract (run-all-mutants/of-module main-module
                                             module-to-mutate
@@ -214,7 +202,9 @@ Blamed: ~a
                                module-to-mutate
                                index-so-far
                                ctc-precision
-                               #:suppress-output? #t)))
+                               #:suppress-output? #t
+                               #:timeout/s (* 3 60)
+                               #:memory/gb 2)))
   (cond [(index-exceeded? (first results/this-index))
          (flatten (reverse results-so-far))]
         [else
@@ -244,4 +234,86 @@ Blamed: ~a
           mutated-id)
   (pretty-print (syntax->datum mutated-program-stx)))
 
+(module+ test
+  (require rackunit)
+  (check-equal?
+   (with-output-to-string
+     (λ _ (run-with-mutated-module "a.rkt"
+                                   "a.rkt"
+                                   0
+                                   'none
+                                   #:suppress-output? #f)))
+   "B
+(c 5)
+(d 1)
+(a 0)
+(b 1)
+4
+")
 
+(check-equal?
+ (with-output-to-string
+   (λ _ (run-with-mutated-module "a.rkt"
+                                 "b.rkt"
+                                 0
+                                 'none
+                                 #:suppress-output? #f)))
+ "B
+(c -1)
+(d 1)
+(a 1)
+(b 1)
+-2
+")
+
+(check-match
+ (run-with-mutated-module "a.rkt" "a.rkt" 2 'none
+                          #:timeout/s 100
+                          #:memory/gb 1)
+ (run-status 'oom _ _ _ _ _))
+
+(parameterize ([report-progress #t])
+(check-match
+ (run-all-mutants/with-modules "a.rkt" '("a.rkt" "b.rkt"))
+ (list
+   (run-status 'completed #f "a.rkt" 'a 'none 0)
+   (run-status 'completed #f "a.rkt" 'a 'types 0)
+   (run-status 'blamed '(definition a) "a.rkt" 'a 'max 0)
+   (run-status 'completed #f "a.rkt" 'b 'none 1)
+   (run-status 'blamed '(definition b) "a.rkt" 'b 'types 1)
+   (run-status 'blamed '(definition b) "a.rkt" 'b 'max 1)
+   (run-status 'oom #f "a.rkt" 'foo 'none 2)
+   (run-status 'oom #f "a.rkt" 'foo 'types 2)
+   (run-status 'oom #f "a.rkt" 'foo 'max 2)
+   (run-status 'completed #f "a.rkt" 'foo 'none 3)
+   (run-status 'completed #f "a.rkt" 'foo 'types 3)
+   (run-status 'blamed '(function foo) "a.rkt" 'foo 'max 3)
+   (run-status 'completed #f "a.rkt" 'foo 'none 4)
+   (run-status 'completed #f "a.rkt" 'foo 'types 4)
+   (run-status 'blamed '(function foo) "a.rkt" 'foo 'max 4)
+   (run-status 'completed #f "a.rkt" 'foo
+               (or 'none 'types 'max)
+               (or 5 6 7 8 9 10 11 12))
+   ...
+   (run-status 'completed #f "b.rkt" 'c 'none 0)
+   (run-status 'blamed '(definition c) "b.rkt" 'c 'types 0)
+   (run-status 'blamed '(definition c) "b.rkt" 'c 'max 0)
+   (run-status 'crashed (? exn:fail:contract?) "b.rkt" 'd 'none 1)
+   (run-status 'blamed '(definition d) "b.rkt" 'd 'types 1)
+   (run-status 'blamed '(definition d) "b.rkt" 'd 'max 1)
+   (run-status 'completed #f "b.rkt" 'd 'none 2)
+   (run-status 'completed #f "b.rkt" 'd 'types 2)
+   (run-status 'blamed '(definition d) "b.rkt" 'd 'max 2)))))
+
+;; lltmp
+(module+ main
+  ;; example divergent mutant
+  ;; Just consumes memory until it is killed
+  (parameterize ([report-progress #t])
+    (run-with-mutated-module "/home/lukas/github_sync/grad/projects/blame-utility/src/gtp-benchmarks/benchmarks/forth/untyped/main.rkt"
+                             "../benchmarks/forth/untyped/eval.rkt"
+                             10
+                             'types
+                             #:suppress-output? #t
+                             #:timeout/s (* 3 60)
+                             #:memory/gb 3)))
