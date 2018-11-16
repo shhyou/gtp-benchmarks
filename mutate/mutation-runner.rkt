@@ -190,40 +190,62 @@ Blamed: ~a
 
 (define/contract (run-all-mutants/of-module main-module
                                             module-to-mutate
-                                            [index-so-far 0]
-                                            [results-so-far empty])
-  (string? string? . -> . (listof run-status?))
+                                            #:suppress-output? suppress-output?
+                                            #:timeout/s timeout/s
+                                            #:memory/gb memory/gb)
+  (string?
+   string?
+   #:suppress-output? boolean?
+   #:timeout/s number?
+   #:memory/gb number?
+   . -> .
+   (listof run-status?))
 
-  (define results/this-index
-    (for*/list ([ctc-precision precision-configs])
-      (when (report-progress)
-        (displayln "."))
-      (run-with-mutated-module main-module
-                               module-to-mutate
-                               index-so-far
-                               ctc-precision
-                               #:suppress-output? #t
-                               #:timeout/s (* 3 60)
-                               #:memory/gb 2)))
-  (cond [(index-exceeded? (first results/this-index))
-         (flatten (reverse results-so-far))]
-        [else
-         (when (report-progress)
-           (displayln "-------------------------")
-           (for-each report-run-status results/this-index)
-           (displayln "-------------------------"))
-         (run-all-mutants/of-module main-module
-                                    module-to-mutate
-                                    (add1 index-so-far)
-                                    (cons results/this-index
-                                          results-so-far))]))
+  (let loop ([index-so-far 0]
+             [results-so-far empty])
+    (define results/this-index
+      (for*/list ([ctc-precision precision-configs])
+        (when (report-progress)
+          (displayln "."))
+        (run-with-mutated-module main-module
+                                 module-to-mutate
+                                 index-so-far
+                                 ctc-precision
+                                 #:suppress-output? suppress-output?
+                                 #:timeout/s timeout/s
+                                 #:memory/gb memory/gb)))
+    (cond [(index-exceeded? (first results/this-index))
+           (flatten (reverse results-so-far))]
+          [else
+           (when (report-progress)
+             (displayln "-------------------------")
+             (for-each report-run-status results/this-index)
+             (displayln "-------------------------"))
+           (loop (add1 index-so-far)
+                 (cons results/this-index
+                       results-so-far))])))
 
 (define/contract (run-all-mutants/with-modules main-module
-                                               mutatable-modules)
-  (string? (listof string?) . -> . (listof run-status?))
+                                               mutatable-modules
+                                               #:suppress-output?
+                                               [suppress-output? #t]
+                                               #:timeout/s
+                                               [timeout/s (* 3 60)]
+                                               #:memory/gb
+                                               [memory/gb 3])
+  ((string? (listof string?))
+   (#:suppress-output? boolean?
+    #:timeout/s number?
+    #:memory/gb number?)
+   . ->* . (listof run-status?))
 
-  (flatten (map (curry run-all-mutants/of-module main-module)
-                mutatable-modules)))
+  (flatten
+   (map (λ (x)
+          (run-all-mutants/of-module main-module x
+                                     #:suppress-output? suppress-output?
+                                     #:timeout/s timeout/s
+                                     #:memory/gb memory/gb))
+        mutatable-modules)))
 
 
 ;; for debugging
@@ -310,10 +332,10 @@ Blamed: ~a
   ;; example divergent mutant
   ;; Just consumes memory until it is killed
   (parameterize ([report-progress #t])
-    (run-with-mutated-module "/home/lukas/github_sync/grad/projects/blame-utility/src/gtp-benchmarks/benchmarks/forth/untyped/main.rkt"
-                             "../benchmarks/forth/untyped/eval.rkt"
-                             10
-                             'types
-                             #:suppress-output? #t
-                             #:timeout/s (* 3 60)
-                             #:memory/gb 3)))
+    (run-all-mutants/with-modules "../benchmarks/forth/untyped/main.rkt"
+                                  '("../benchmarks/forth/untyped/eval.rkt"
+                                    "../benchmarks/forth/untyped/command.rkt"
+                                    "../benchmarks/forth/untyped/stack.rkt")
+                                  #:suppress-output? #t
+                                  #:timeout/s (* 3 60)
+                                  #:memory/gb 3)))
