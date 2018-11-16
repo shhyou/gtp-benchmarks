@@ -1745,24 +1745,5 @@ Actual:
      1))
    'singleton-list?))
 
-;; lltodo: wiw:
-;;
-;; lltodo: need to find a way to record or annotate somehow the "bug"
-;; region of the program.
-;;
-;; Idea: have my mutate-program function set a parameter for the
-;; current region that the mutation function can refer to and somehow flag?
-;;
-;; ⟶ Better idea: just have the mutate-program function inspect the
-;; mutated result to determine if the mutation happened inside a given
-;; definition (ie region) -- it can know when counter >= mutation-index
-;;
-;; Is this good enough? Question is if we want region-level
-;; granularity for determining where the bug is or finer than that.
-;; Upon a moments reflection I think that region based granularity
-;; makes the most sense, since that is the level at which blame
-;; operates.
-
-
 ;; Potential mutations that have been deferred:
 ;; - Moving occurrences of (super-new) around in class body
