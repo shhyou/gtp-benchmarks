@@ -45,7 +45,9 @@
 ;; -- Commands
 
 (define/contract command%
-  command%/c
+  (configurable-ctc
+   [max command%/c]
+   [types command%/c])
   (class object%
     (super-new)
     (init-field

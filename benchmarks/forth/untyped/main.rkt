@@ -18,15 +18,19 @@
   10)
 
 (define/contract (main lines)
-  (-> (listof string?) void?)
+  (configurable-ctc
+   [max (-> (listof string?) void?)]
+   [types (-> (listof string?) void?)])
 
   (for ((i (in-range LOOPS)))
     (define-values [_e _s] (forth-eval* lines))
     (void)))
 
 (define/contract lines
-  (listof string?)
+  (configurable-ctc
+   [max (listof string?)]
+   [types (listof string?)])
+
   (file->lines "../base/history-100.txt"))
 
-(module+ main
-  (time (main lines)))
+(time (main lines))
