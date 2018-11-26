@@ -50,13 +50,14 @@
 ;; Base mutator: all mutation happens through this function
 ;;
 ;; Manages the decision of whether or not to apply a mutation based on
-;; `mutation-index` and `counter`. Assumes that `old-stx` and
-;; `new-stx` are different (ie they represent a real mutation).
+;; `mutation-index` and `counter`, recording the consideration of a
+;; valid mutation (in terms of the counter).
+;;
+;; If `old-stx` is syntactically identical to `new-stx`, the mutation
+;; will not be considered.
 (define/contract (maybe-mutate old-stx new-stx mutation-index counter)
   (->i ([old-stx syntax?]
-        [new-stx (old-stx)
-                 (and/c syntax?
-                        (not/c (curry exprs-equal? old-stx)))]
+        [new-stx syntax?]
         [mutation-index mutation-index?]
         [counter (mutation-index)
                  (and/c counter?
@@ -66,10 +67,25 @@
    (if (= mutation-index counter)
        new-stx
        old-stx)
-   ;; since this function ONLY gets real mutations that could be applied
-   ;; we always increment counter, indicating that a mutatable expr has
-   ;; been considered.
-   (add1 counter)))
+   (if (exprs-equal? old-stx new-stx)
+       counter
+       ;; This was a mutation that could be applied, so increment
+       ;; counter, indicating that a mutatable expr has been
+       ;; considered.
+       (add1 counter))))
+
+(module+ test
+  ;; Valid mutation, but counter is not yet high enough
+  (check-equal? (mmap syntax->datum (maybe-mutate #'a #'b 5 0))
+                (mmap syntax->datum (mutated #'a 1)))
+  ;; Valid mutation, counter is right
+  (check-equal? (mmap syntax->datum (maybe-mutate #'a #'b 5 5))
+                (mmap syntax->datum (mutated #'b 6)))
+  ;; Valid mutation but it is syntactically identical
+  ;; This can happen when swapping argument positions
+  ;; e.g. for (foo '() '())
+  (check-equal? (mmap syntax->datum (maybe-mutate #'('() '()) #'('() '()) 5 5))
+                (mmap syntax->datum (mutated #'('() '()) 5))))
 
 (define-syntax (define-mutators stx)
   (syntax-parse stx
@@ -385,6 +401,9 @@
                            (#,arg1 #,arg2)))
   (if (> counter mutation-index)
       (mutated unmutated-pair counter)
+      ;; note that the swapped pair may be syntactically identical to
+      ;; the original. `maybe-mutate` handles this issue
+      ;; automatically.
       (maybe-mutate unmutated-pair
                     (quasisyntax/loc arg1
                       (#,arg2 #,arg1))
