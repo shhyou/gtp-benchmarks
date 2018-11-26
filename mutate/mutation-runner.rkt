@@ -47,18 +47,24 @@
                                     module-to-mutate
                                     mutation-index
                                     ctc-precision-config)
-  (define main-module-path `(file ,main-module))
-  (define module-to-mutate/path `(file ,module-to-mutate))
-  (define module-to-mutate/file-path (module-path->path module-to-mutate/path))
-  (define-values (module-containing-directory _1 _2)
-    (split-path module-to-mutate/file-path))
-  (define-values (mutant-module-stx mutated-id)
-    (mutate-module module-to-mutate/file-path mutation-index))
+  (define main-module/path (path->string (simplify-path main-module)))
+  (define to-mutate/path (path->string (simplify-path module-to-mutate)))
 
-  (define precision-config/path
+  (define main-module/module-path `(file ,main-module/path))
+  (define-values (main-module/containing-directory ___1 ___2)
+    (split-path (module-path->path main-module/module-path)))
+
+  (define to-mutate/module-path `(file ,to-mutate/path))
+  (define to-mutate/file-path (module-path->path to-mutate/module-path))
+  (define-values (to-mutate/containing-directory _1 _2)
+    (split-path to-mutate/file-path))
+  (define-values (mutant-module-stx mutated-id)
+    (mutate-module to-mutate/file-path mutation-index))
+
+  (define precision-config/module-path
     '(file "../ctcs/current-precision-setting.rkt"))
   (define precision-config/file-path
-    (module-path->path precision-config/path))
+    (module-path->path precision-config/module-path))
   (define-values (precision-config-containing-directory __1 __2)
     (split-path precision-config/file-path))
   (define precision-config/stx
@@ -76,7 +82,7 @@
                     ;; Prevent loading from bytecode to ensure mutant is loaded
                     (make-custom-load/use-compiled
                      #:blacklist (curryr member
-                                         (list module-to-mutate/file-path
+                                         (list to-mutate/file-path
                                                precision-config/file-path)))]
                    [current-namespace ns])
       (eval '(require "mutate.rkt"))
@@ -91,7 +97,7 @@
            ;; parameterizing current-directory otherwise relative module
            ;; paths get messed up.
            [current-module-declare-name
-            (module-path-resolve precision-config/path)]
+            (module-path-resolve precision-config/module-path)]
            ;; Ensure relative load paths work
            [current-directory precision-config-containing-directory])
         (eval precision-config/stx))
@@ -100,21 +106,22 @@
       ;; one, so that loading the original module loads the mutant
       ;; instead
       (parameterize
-          ([current-load-relative-directory module-containing-directory]
+          ([current-load-relative-directory to-mutate/containing-directory]
            ;; Note that this needs to be resolved *before*
            ;; parameterizing current-directory otherwise relative module
            ;; paths get messed up.
            [current-module-declare-name
-            (module-path-resolve module-to-mutate/path)]
+            (module-path-resolve to-mutate/module-path)]
            ;; Ensure relative load paths work
-           [current-directory module-containing-directory])
+           [current-directory to-mutate/containing-directory])
         (eval mutant-module-stx))
 
       ;; Ensure relative load paths work
       (parameterize
-          ([current-directory module-containing-directory])
+          ([current-load-relative-directory main-module/containing-directory]
+           [current-directory to-mutate/containing-directory])
         ;; Eval the main module
-        (eval `(require ,main-module-path)))))
+        (eval `(require ,main-module/module-path)))))
 
   (values run mutated-id))
 
