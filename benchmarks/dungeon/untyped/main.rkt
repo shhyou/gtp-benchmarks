@@ -664,8 +664,7 @@
     (show-grid (smooth-walls (generate-dungeon (range N))))
     (reset!)))
 
-(module+ main
-  (time (void (main))))
+(time (void (main)))
 ;; Change `void` to `display` to test. Should see:
 ;;............................................................
 ;;............................................................
