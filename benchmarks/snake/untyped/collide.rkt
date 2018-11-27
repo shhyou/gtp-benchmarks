@@ -2,8 +2,7 @@
 (require "data.rkt"
          "const.rkt"
          "../../../ctcs/precision-config.rkt"
-         "../../../ctcs/common.rkt"
-         (only-in racket/function curry))
+         "../../../ctcs/common.rkt")
 
 
 ;; snake-wall-collide? : Snake -> Boolean
@@ -31,16 +30,18 @@
       (<= (posn-y p) 0)
       (>= (posn-y p) BOARD-HEIGHT)))
 
+(define (truthy->bool x) (if x #t #f))
+(define memf? (compose truthy->bool memf))
+
 ;; snake-self-collide? : Snake -> Boolean
 (define/contract (snake-self-collide? snk)
   (configurable-ctc
    [max (->i ([snk snake?])
              [result (snk)
-                     (let ([h (car (snake-segs snk))]
-                           [segs (cdr (snake-segs snk))])
-                       (if (empty? segs)
-                           #f
-                           (memf (curry posn=? h) segs)))])]
+                     (match (snake-segs snk)
+                       [(cons h t)
+                        (memf? (posn=?/c h) t)]
+                       [else #f])])]
    [types (snake? . -> . boolean?)])
 
   (segs-self-collide? (car (snake-segs snk))
@@ -54,7 +55,7 @@
              [result (h segs)
                      (if (empty? segs)
                          #f
-                         (memf (curry posn=? h) segs))])]
+                         (memf? (posn=?/c h) segs))])]
    [types (posn? snake-segs? . -> . boolean?)])
 
   (cond [(empty? segs) #f]
