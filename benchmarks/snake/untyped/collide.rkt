@@ -9,10 +9,12 @@
 ;; Is the snake colliding with any of the walls?
 (define/contract (snake-wall-collide? snk)
   (configurable-ctc
-   [max (->i ([snk snake?])
+   [max (->i ([snk snake-type?])
              [result (snk)
-                     (head-collide? (car (snake-segs snk)))])]
-   [types (snake? . -> . boolean?)])
+                     (match snk
+                       [(snake _ (cons h _)) (head-collide? h)]
+                       [_ #f])])]
+   [types (snake-type? . -> . boolean?)])
 
   (head-collide? (car (snake-segs snk))))
 
@@ -36,13 +38,13 @@
 ;; snake-self-collide? : Snake -> Boolean
 (define/contract (snake-self-collide? snk)
   (configurable-ctc
-   [max (->i ([snk snake?])
+   [max (->i ([snk snake-type?])
              [result (snk)
-                     (match (snake-segs snk)
-                       [(cons h t)
+                     (match snk
+                       [(snake _ (cons h t))
                         (memf? (posn=?/c h) t)]
-                       [else #f])])]
-   [types (snake? . -> . boolean?)])
+                       [_ #f])])]
+   [types (snake-type? . -> . boolean?)])
 
   (segs-self-collide? (car (snake-segs snk))
                       (cdr (snake-segs snk))))
