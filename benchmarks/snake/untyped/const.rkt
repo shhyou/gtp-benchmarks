@@ -40,8 +40,8 @@
   (SEGMENT-RADIUS))
 (define/contract (WORLD)
   (configurable-ctc
-   [max (-> (world/c (equal?/c "right")
-                     (equal?/c (list (posn 5 3)))))]
+   [max (-> (world/c "right"
+                     (snake-segs=?/c (list (posn 5 3)))))]
    [types (-> world-type?)])
   (world (snake "right" (cons (posn 5 3) empty))
          (posn 8 12)))

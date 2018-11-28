@@ -8,6 +8,9 @@
 (define food? (listof posn?))
 
 (define snake-segs? (listof posn?))
+(define (snake-segs=?/c segs)
+  (apply list/c (map posn=?/c segs)))
+
 (define snake-dir? (or/c "up"
                          "down"
                          "left"
@@ -35,6 +38,9 @@
   (match x
     [(world (? snake/c) (? food/c)) #t]
     [_ #f]))
+
+(define ((world=?/c w1) w2)
+  (equal? w1 w2))
 
 (define world-type? (world/c snake-type? food?))
 
@@ -64,9 +70,11 @@
  [struct-out world]
  posn?
  snake-segs?
+ snake-segs=?/c
  snake-dir?
  snake-type?
  snake/c
  posn=?/c
  world/c
- world-type?)
+ world-type?
+ world=?/c)

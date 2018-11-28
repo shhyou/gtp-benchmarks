@@ -13,7 +13,7 @@
    [max (->i ([w world-type?]
               [ke string?])
              [result (w ke)
-                     (equal?/c
+                     (world=?/c
                       (match ke
                         [(or "w" "s" "a" "d")
                          (world-change-dir w ke)]

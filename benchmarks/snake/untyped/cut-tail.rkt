@@ -15,7 +15,7 @@
   (configurable-ctc
    [max (->i ([segs ne-segs?])
              [result (segs)
-                     (equal?/c (drop-right segs 1))])]
+                     (snake-segs=?/c (drop-right segs 1))])]
    [types (ne-segs? . -> . snake-segs?)])
 
   (let ([r (cdr segs)])
