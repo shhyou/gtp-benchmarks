@@ -17,7 +17,7 @@
                         [((posn x y) "left")  (posn (sub1 x) y)]
                         [((posn x y) "down")  (posn x (sub1 y))]
                         [((posn x y) "up")    (posn x (add1 y))]))])]
-   [types (posn? snake-dir? . -> . posn?)])
+   [types (posn? string? . -> . posn?)])
 
   (cond [(equal? "right" dir) (posn (add1 (posn-x seg)) (posn-y seg))]
         [(equal? "left" dir)  (posn (sub1 (posn-x seg)) (posn-y seg))]
