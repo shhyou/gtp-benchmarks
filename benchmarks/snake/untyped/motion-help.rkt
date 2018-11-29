@@ -8,7 +8,7 @@
 ;; Compute next position for head.
 (define/contract (next-head seg dir)
   (configurable-ctc
-   [max (->i ([seg posn?]
+   [max (->i ([seg posn-type?]
               [dir snake-dir?])
              [result (seg dir)
                      (posn=?/c
@@ -17,7 +17,7 @@
                         [((posn x y) "left")  (posn (sub1 x) y)]
                         [((posn x y) "down")  (posn x (sub1 y))]
                         [((posn x y) "up")    (posn x (add1 y))]))])]
-   [types (posn? string? . -> . posn?)])
+   [types (posn-type? string? . -> . posn-type?)])
 
   (cond [(equal? "right" dir) (posn (add1 (posn-x seg)) (posn-y seg))]
         [(equal? "left" dir)  (posn (sub1 (posn-x seg)) (posn-y seg))]

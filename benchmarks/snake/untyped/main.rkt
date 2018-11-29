@@ -10,9 +10,9 @@
 (define/contract (replay w0 hist)
   (configurable-ctc
    [max (world-type?
-         (listof (listof (or/c (list/c 'on-key string?)
-                               (list/c 'on-tick)
-                               (list/c 'stop-when))))
+         (listof (or/c (list/c 'on-key string?)
+                       (list/c 'on-tick)
+                       (list/c 'stop-when)))
          . -> .
          void?)]
    [types (world-type? (listof (listof (or/c symbol? string?))) . -> . void?)])
@@ -43,9 +43,9 @@
 
 (define/contract (main hist)
   (configurable-ctc
-   [max ((listof (listof (or/c (list/c 'on-key string?)
-                               (list/c 'on-tick)
-                               (list/c 'stop-when))))
+   [max ((listof (or/c (list/c 'on-key string?)
+                       (list/c 'on-tick)
+                       (list/c 'stop-when)))
          . -> .
          void?)]
    [types ((listof (listof (or/c symbol? string?))) . -> . void?)])

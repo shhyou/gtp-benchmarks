@@ -68,7 +68,7 @@
    [max (->i ([snk snake-type?]
               [dir snake-dir?])
              [result (snk dir)
-                     (snake/c dir (snake-segs snk))])]
+                     (snake/c dir (snake-segs=?/c (snake-segs snk)))])]
    [types (snake-type? string? . -> . snake-type?)])
 
   (snake dir

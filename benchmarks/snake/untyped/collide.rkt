@@ -21,11 +21,11 @@
 ;; head-collide? : Posn -> Boolean
 (define/contract (head-collide? p)
   (configurable-ctc
-   [max (->i ([p posn?])
+   [max (->i ([p posn-type?])
              [result (p)
-                     (not (and (<= 0 (posn-x p) BOARD-WIDTH)
-                               (<= 0 (posn-y p) BOARD-HEIGHT)))])]
-   [types (posn? . -> . boolean?)])
+                     (not (and (< 0 (posn-x p) BOARD-WIDTH)
+                               (< 0 (posn-y p) BOARD-HEIGHT)))])]
+   [types (posn-type? . -> . boolean?)])
 
   (or (<= (posn-x p) 0)
       (>= (posn-x p) BOARD-WIDTH)
@@ -52,13 +52,13 @@
 ;; segs-self-collide? : Posn Segs -> Boolean
 (define/contract (segs-self-collide? h segs)
   (configurable-ctc
-   [max (->i ([h posn?]
+   [max (->i ([h posn-type?]
               [segs snake-segs?])
              [result (h segs)
                      (if (empty? segs)
                          #f
                          (memf? (posn=?/c h) segs))])]
-   [types (posn? snake-segs? . -> . boolean?)])
+   [types (posn-type? snake-segs? . -> . boolean?)])
 
   (cond [(empty? segs) #f]
         [else (or (posn=? (car segs) h)

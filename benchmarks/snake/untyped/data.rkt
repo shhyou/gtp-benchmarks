@@ -5,20 +5,27 @@
 
 
 (struct posn (x y))
+(define (posn-type? p)
+  (match p
+    [(posn (? integer?) (? integer?)) #t]
+    [_ #f]))
 (define ((posn=?/c p1) p2)
   (and (= (posn-x p1) (posn-x p2))
        (= (posn-y p1) (posn-y p2))))
 (define ((posn/c x/c y/c) x)
   (match x
-    [(posn (? x/c) (? y/c)) #t]
+    ;; ll: the and/c's allow self-recognizing value ctcs to be used
+    [(posn (? (and/c integer? x/c))
+           (? (and/c integer? y/c)))
+     #t]
     [_ #f]))
 
-(define snake-segs? (listof posn?))
+(define snake-segs? (listof posn-type?))
 (define (snake-segs=?/c segs)
   (apply list/c (map posn=?/c segs)))
 
 ;; lltodo: I think this is wrong, should just be one
-(define food? posn?)
+(define food? posn-type?)
 (define food=?/c posn=?/c)
 
 (define snake-dir? (or/c "up"
@@ -87,6 +94,7 @@
  [struct-out snake]
  [struct-out world]
  posn?
+ posn-type?
  posn/c
  snake-segs?
  snake-segs=?/c

@@ -14,10 +14,18 @@
               [ke string?])
              [result (w ke)
                      (world=?/c
-                      (match ke
-                        [(or "w" "s" "a" "d")
-                         (world-change-dir w ke)]
-                        [_ w]))])]
+                      (let ([keymap (hash "w" "up"
+                                          "s" "down"
+                                          "a" "left"
+                                          "d" "right")])
+                        (match* (ke w)
+                          [((? (curry hash-has-key? keymap))
+                            (world (snake _ segs)
+                                   food))
+                           (world (snake (hash-ref keymap ke)
+                                         segs)
+                                  food)]
+                          [(_ w) w])))])]
    [types (world-type? string? . -> . world-type?)])
 
   (cond [(equal? ke "w") (world-change-dir w "up")]
