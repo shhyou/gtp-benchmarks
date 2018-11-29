@@ -3,9 +3,20 @@
 (require "data.rkt"
          "const.rkt"
          "handlers.rkt"
-         "motion.rkt")
+         "motion.rkt"
+         "../../../ctcs/precision-config.rkt"
+         "../../../ctcs/common.rkt")
 
-(define (replay w0 hist)
+(define/contract (replay w0 hist)
+  (configurable-ctc
+   [max (world-type?
+         (listof (listof (or/c (list/c 'on-key string?)
+                               (list/c 'on-tick)
+                               (list/c 'stop-when))))
+         . -> .
+         void?)]
+   [types (world-type? (listof (listof (or/c symbol? string?))) . -> . void?)])
+
   (reset!)
   (let loop ((w w0) (h hist))
     (if (empty? h)
@@ -24,9 +35,21 @@
   (void))
 
 (define DATA (with-input-from-file "../base/snake-hist.rktd" read))
-(define LOOPS 200)
+(define/contract LOOPS
+  (configurable-ctc
+   [max (=/c 200)]
+   [types natural?])
+  200)
 
-(define (main hist)
+(define/contract (main hist)
+  (configurable-ctc
+   [max ((listof (listof (or/c (list/c 'on-key string?)
+                               (list/c 'on-tick)
+                               (list/c 'stop-when))))
+         . -> .
+         void?)]
+   [types ((listof (listof (or/c symbol? string?))) . -> . void?)])
+
   (define w0 (WORLD))
   (cond [(list? hist)
          (for ((_i (in-range LOOPS)))
