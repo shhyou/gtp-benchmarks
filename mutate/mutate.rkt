@@ -4,12 +4,20 @@
  (contract-out
   [rename mutate-program-wrapper*
           mutate-program/with-id
-          ;; note: result may be unchanged!
-          (syntax? natural? . -> . mutated-program?)]
+          ;; note: result may be unchanged! Probably not, but maybe.
+          ((syntax? natural?)
+           (#:mutate-uncontracted-defs?
+            boolean?)
+           . ->* .
+           mutated-program?)]
   [rename mutate-program-wrapper
           mutate-program
-          ;; note: result may be unchanged!
-          (syntax? natural? . -> . syntax?)])
+          ;; note: result may be unchanged! Probably not, but maybe.
+          ((syntax? natural?)
+           (#:mutate-uncontracted-defs?
+            boolean?)
+           . ->* .
+           syntax?)])
  mutation-index-exception?
  (struct-out mutated-program))
 
@@ -230,6 +238,12 @@
 (define-syntax-class contracted-definition
   #:description "define/contract form"
   (pattern ((~datum define/contract) id/sig ctc body ...)))
+(define-syntax-class uncontracted-definition
+  #:description "any uncontracted top-level define form"
+  (pattern ((~or (~datum define)
+                 (~datum define/match)
+                 (~datum define-values))
+            id/sig body ...)))
 (define-syntax-class non-keyword
   #:description "non-keyword form"
   (pattern (~not (~or (~datum #%module-begin)
@@ -449,15 +463,58 @@
 
 
 
+
+
 ;; Note: distinction between mutate-program and mutate-expr
 ;; is necessary because mutate-program should descend only into
 ;; contracted top level forms, while mutate-expr can descend into
 ;; everything (mutate-program acts like its gatekeeper)
-(define/contract (mutate-program stx mutation-index [counter 0])
+(define/contract (mutate-program stx mutation-index
+                                 [counter 0]
+                                 #:mutate-uncontracted-defs?
+                                 [mutate-uncontracted-defs? #f])
   ((syntax? mutation-index?)
-   (counter?)
+   (counter?
+    #:mutate-uncontracted-defs? boolean?)
    . ->* .
    (mutated/c mutated-program?))
+
+  (define (mutate-program* stx* counter*)
+    (mutate-program stx*
+                    mutation-index
+                    counter*
+                    #:mutate-uncontracted-defs?
+                    mutate-uncontracted-defs?))
+
+  (define/contract (mutate-definition definition-id/sig
+                                      body-stxs
+                                      definition-reconstructor
+                                      program-rest-stxs)
+    (syntax?
+     (listof syntax?)
+     ((listof syntax?) . -> . syntax?)
+     syntax?
+     . -> .
+     (mutated/c mutated-program?))
+
+    (mdo [count-with (__ counter)]
+         (def body-stxs/mutated (mutate-in-seq body-stxs
+                                               mutation-index
+                                               __
+                                               mutate-expr))
+         (def/value body-stxs-mutated?
+           (mutation-applied-already? mutation-index __))
+         (def (mutated-program program-rest mutated-fn-in-rest)
+           (mutate-program* program-rest-stxs
+                            __))
+         [return
+          (mutated-program
+           (quasisyntax/loc stx
+             (#,(definition-reconstructor body-stxs/mutated)
+              #,@program-rest))
+           (if body-stxs-mutated?
+               (first (flatten (syntax->datum definition-id/sig)))
+               mutated-fn-in-rest))]))
 
   (if (and make-mutants
            (<= counter mutation-index))
@@ -465,35 +522,30 @@
         ;; Mutate contracted definition bodies
         ;; (could be class, function, other value)
         [(def:contracted-definition e ...)
-         (define body-stxs (syntax-e (syntax/loc stx
-                                       (def.body ...))))
-         (mdo [count-with (__ counter)]
-              (def body-stxs/mutated (mutate-in-seq body-stxs
-                                                    mutation-index
-                                                    __
-                                                    mutate-expr))
-              (def/value body-stxs-mutated?
-                (mutation-applied-already? mutation-index __))
-              (def (mutated-program program-rest mutated-fn-in-rest)
-                (mutate-program (syntax/loc stx (e ...))
-                                mutation-index
-                                __))
-              [return
-               (mutated-program
-                (quasisyntax/loc stx
-                  ((define/contract def.id/sig def.ctc
-                     #,@body-stxs/mutated)
-                   #,@program-rest))
-                (if body-stxs-mutated?
-                    (first (flatten (syntax->datum #'(def.id/sig))))
-                    mutated-fn-in-rest))])]
+         (mutate-definition #'(def.id/sig)
+                            (syntax-e (syntax/loc stx
+                                        (def.body ...)))
+                            (λ (body-stxs/mutated)
+                              (quasisyntax/loc stx
+                                (define/contract def.id/sig def.ctc
+                                  #,@body-stxs/mutated)))
+                            (syntax/loc stx (e ...)))]
+        [(def:uncontracted-definition e ...)
+         #:when mutate-uncontracted-defs?
+         (mutate-definition #'(def.id/sig)
+                            (syntax-e (syntax/loc stx
+                                        (def.body ...)))
+                            (λ (body-stxs/mutated)
+                              (quasisyntax/loc stx
+                                (define def.id/sig
+                                  #,@body-stxs/mutated)))
+                            (syntax/loc stx (e ...)))]
 
         ;; Ignore anything else
         [(other-e e ...)
          (mdo* (def (mutated-program rest-stxs mutated-fn-in-rest)
-                 (mutate-program (syntax/loc stx (e ...))
-                                 mutation-index
-                                 counter))
+                 (mutate-program* (syntax/loc stx (e ...))
+                                  counter))
                [return
                 (mutated-program
                  (quasisyntax/loc stx
@@ -506,14 +558,24 @@
       (mutated (mutated-program stx #f) counter)))
 
 ;; mutate-program-wrapper: syntax? natural? -> syntax?
-(define (mutate-program-wrapper stx mutation-index)
+(define (mutate-program-wrapper stx mutation-index
+                                #:mutate-uncontracted-defs?
+                                [mutate-uncontracted-defs? #f])
   (match-define (mutated-program p f)
-    (mutate-program-wrapper* stx mutation-index))
+    (mutate-program-wrapper* stx mutation-index
+                             #:mutate-uncontracted-defs?
+                             mutate-uncontracted-defs?))
   p)
 
-(define (mutate-program-wrapper* stx mutation-index)
-  (match-define (mutated p c) (mutate-program stx mutation-index))
+;; mutate-program-wrapper*: syntax? natural? -> mutated-program?
+(define (mutate-program-wrapper* stx mutation-index
+                                 #:mutate-uncontracted-defs?
+                                 [mutate-uncontracted-defs? #f])
+  (match-define (mutated p c) (mutate-program stx mutation-index
+                                              #:mutate-uncontracted-defs?
+                                              mutate-uncontracted-defs?))
   p)
+
 
 ;; end syntax traversers
 #|----------------------------------------------------------------------|#
@@ -1762,7 +1824,78 @@ Actual:
              (not (null? x))
              (null? (cdr x))))}
      1))
-   'singleton-list?))
+   'singleton-list?)
+
+
+
+
+
+  (define-check/loc (check-mutation/sequence/all-defs orig-program expects)
+    #:ignore-parameters
+    (let/cc fail
+      (for ([expect (in-list expects)])
+        (match-define (list mutation-index expected) expect)
+        (match-define (mutated (mutated-program actual _) _)
+          (mutate-program orig-program mutation-index
+                          #:mutate-uncontracted-defs? #t))
+        (unless (programs-equal? actual expected)
+          (fail
+           (string-append
+            (format
+             "Result does not match expected output.
+Mutaton index: ~v
+Expected:
+~a
+
+Actual:
+~a
+"
+             mutation-index
+             (pretty-format (syntax->datum expected))
+             (pretty-format (syntax->datum actual)))))))
+      #t))
+
+  ;; Test mutating non-contracted definitions
+  (check-mutation/sequence/all-defs
+   #'{(define a 1)
+      (define/contract b any/c 2)
+      (define c #t)}
+   `([0 ,#'{(define a 0)
+            (define/contract b any/c 2)
+            (define c #t)}]
+     [1 ,#'{(define a 1)
+            (define/contract b any/c (add1 2))
+            (define c #t)}]
+     [2 ,#'{(define a 1)
+            (define/contract b any/c 2)
+            (define c (not #t))}]))
+
+  (check-mutation/sequence/all-defs
+   #'{(define a ((if #t + -) 1 2))}
+   `([0 ,#'{(define a ((if #t + -) 2 1))}]
+     [1 ,#'{(define a ((if (not #t) + -) 1 2))}]
+     [2 ,#'{(define a ((if #t - -) 1 2))}]
+     [3 ,#'{(define a ((if #t + +) 1 2))}]
+     [4 ,#'{(define a ((if #t + -) 0 2))}]
+     [5 ,#'{(define a ((if #t + -) 1 (add1 2)))}]))
+
+  (check-mutation/sequence/all-defs
+   #'{(define (foo x) (+ x 1))
+      (define/contract a any/c (+ (foo 1) 2))}
+   `[[0 ,#'{(define (foo x) (+ 1 x))
+            (define/contract a any/c (+ (foo 1) 2))}]
+     [1 ,#'{(define (foo x) (- x 1))
+            (define/contract a any/c (+ (foo 1) 2))}]
+     [2 ,#'{(define (foo x) (+ x 0))
+            (define/contract a any/c (+ (foo 1) 2))}]
+     [3 ,#'{(define (foo x) (+ x 1))
+            (define/contract a any/c (+ 2 (foo 1)))}]
+     [4 ,#'{(define (foo x) (+ x 1))
+            (define/contract a any/c (- (foo 1) 2))}]
+     [5 ,#'{(define (foo x) (+ x 1))
+            (define/contract a any/c (+ (foo 0) 2))}]
+     [6 ,#'{(define (foo x) (+ x 1))
+            (define/contract a any/c (+ (foo 1) (add1 2)))}]]))
 
 ;; Potential mutations that have been deferred:
 ;; - Moving occurrences of (super-new) around in class body
