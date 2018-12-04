@@ -153,6 +153,7 @@
   (+ <-> -)
   (* <-> /)
   (and <-> or)
+  (add1 <-> sub1)
   (modulo -> *)
   (define/public -> define/private)
   ;; (define/override <-> define/augment)
@@ -1130,6 +1131,33 @@ Actual:
               any/c
               (and x #t))
             (define/contract b positive? 2)}]))
+
+  (check-mutation/sequence
+   #'{(define/contract (f x)
+        any/c
+        (add1 x))
+      (define/contract b positive? 2)}
+   `([0 ,#'{(define/contract (f x)
+              any/c
+              (sub1 x))
+            (define/contract b positive? 2)}]
+     [1 ,#'{(define/contract (f x)
+              any/c
+              (add1 x))
+            (define/contract b positive? (add1 2))}]))
+  (check-mutation/sequence
+   #'{(define/contract (f x)
+        any/c
+        (sub1 x))
+      (define/contract b positive? 2)}
+   `([0 ,#'{(define/contract (f x)
+              any/c
+              (add1 x))
+            (define/contract b positive? 2)}]
+     [1 ,#'{(define/contract (f x)
+              any/c
+              (sub1 x))
+            (define/contract b positive? (add1 2))}]))
 
   ;; Test choices of index
   (check-mutation/sequence
