@@ -26,7 +26,7 @@
   (syntax-parse stx
     [(_ [level ctc] ...)
      (let* ([levels (syntax->datum #'(level ...))]
-            [ctcs (flatten (syntax->list #'(ctc ...)))]
+            [ctcs (syntax->list #'(ctc ...))]
             [current-level-index (index-of levels
                                            current-precision-config)]
             [current-ctc-stx (if (number? current-level-index)
