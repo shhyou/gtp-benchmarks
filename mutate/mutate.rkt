@@ -24,6 +24,7 @@
 (require (for-syntax syntax/parse)
          syntax/parse
          racket/match
+         "logging.rkt"
          "mutated.rkt")
 
 #|----------------------------------------------------------------------|#
@@ -71,6 +72,19 @@
                  (and/c counter?
                         (<=/c mutation-index))])
        [result mutated?])
+  (when (and (= mutation-index counter)
+             (not (exprs-equal? old-stx new-stx)))
+    (log-mutation-info
+     "            ~a:~a:~a ~a"
+     (~a (syntax-source old-stx)
+         #:limit-marker "..."
+         #:limit-prefix? #t
+         #:max-width 15)
+     (syntax-line old-stx)
+     (syntax-column old-stx)
+     (~a (syntax->datum new-stx)
+         #:limit-marker "..."
+         #:max-width 40)))
   (mutated
    (if (= mutation-index counter)
        new-stx
