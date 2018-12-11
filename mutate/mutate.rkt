@@ -74,6 +74,7 @@
        [result mutated?])
   (when (and (= mutation-index counter)
              (not (exprs-equal? old-stx new-stx)))
+    (set-mutated-syntax! old-stx new-stx)
     (log-mutation-info
      "            ~a:~a:~a ~a"
      (~a (syntax-source old-stx)
