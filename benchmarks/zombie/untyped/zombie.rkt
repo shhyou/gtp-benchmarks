@@ -4,19 +4,17 @@
  w0
  world-on-mouse
  world-on-tick
- world/c
 )
 
-(require
-  racket/contract
-  "../../../ctcs/precision-config.rkt"
-  (for-syntax racket/sequence racket/base syntax/parse racket/syntax))
+(require racket/contract
+         "../../../ctcs/precision-config.rkt")
 
 (require (only-in "image.rkt"
   empty-scene
   place-image
   circle
 ))
+
 (require (only-in "math.rkt"
   min
   max
@@ -24,6 +22,8 @@
   sqr
   msqrt
 ))
+
+(require "data.rkt")
 
 ;; =============================================================================
 
@@ -35,137 +35,6 @@
 (define ZOMBIE-RADIUS 20)
 (define PLAYER-RADIUS 20)
 (define PLAYER-IMG (circle PLAYER-RADIUS "solid" "green"))
-
-;; Create an object type (-> Symbol (U (Pairof Symbol ?) ...))
-;;  and getters for each member of the codomain union
-(define-syntax make-fake-object-type*
-  ;;bg; the untyped version ignores all types
-  (syntax-parser
-   [(_ ty [f* t*] ...)
-    #:with ty-method-id/c (format-id #'ty "~a-method-id/c" (string-downcase (symbol->string (syntax-e #'ty))))
-    #:with ty/c (format-id #'ty "~a/c" (string-downcase (symbol->string (syntax-e #'ty))))
-    #:with (id* ...) (for/list ([f (in-list (syntax->list #'(f* ...)))])
-                       (format-id #'ty "~a-~a" (string-downcase (symbol->string (syntax-e #'ty))) f))
-    #:with (f-sym* ...) (for/list ([f (in-list (syntax->list #'(f* ...)))]) (syntax-e f))
-    #'(begin
-        ;(define-type ty (-> Symbol (U (Pairof 'f-sym* t*) ...)))
-        (define ty-method-id/c
-          (flat-named-contract 'ty-method-id/c
-                               (or/c 'f-sym* ...)))
-        (define ty/c (-> ty-method-id/c (cons/c ty-method-id/c any/c)))
-        (begin
-          ;(: id* (-> ty t*))
-          (define/contract (id* v)
-            (configurable-ctc
-             [types (-> ty/c any)]
-             [max (-> ty/c any)])
-            (let ([r (v 'f-sym*)])
-              (if (eq? 'f-sym* (car r))
-                (cdr r)
-                (error 'id* "type error"))))) ...)]))
-
-;(define posn/c
-; (->i ([msg (one-of/c 'x 'y 'posn 'move-toward/speed 'draw-on/image 'dist)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'x) (-> number?)]
-;    [(equal? msg 'y) (-> number?)]
-;    [(equal? msg 'posn) (-> posn/c)]
-;    [(equal? msg 'move-toward/speed) (posn/c number? . -> . posn/c)]
-;    [(equal? msg 'draw-on/image) (image? image? . -> . image?)]
-;    [(equal? msg 'dist) (posn/c . -> . number?)]
-;    [else "error"]))))
-
-(make-fake-object-type* Posn
-  [x (-> Real)]
-  [y (-> Real)]
-  [posn (-> Posn)]
-  [move-toward/speed (-> Posn Real Posn)]
-  [move (-> Real Real Posn)]
-  [draw-on/image (-> Image Image Image)]
-  [dist (-> Posn Real)])
-
-;(define player/c
-; (->i ([msg (one-of/c 'posn 'move-toward 'draw-on)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'posn) (-> posn/c)]
-;    [(equal? msg 'move-toward) (posn/c . -> . player/c)]
-;    [(equal? msg 'draw-on) (image? . -> . image?)]
-;    [else "error"]))))
-
-(make-fake-object-type* Player
-  (posn (-> Posn))
-  (move-toward (-> Posn Player))
-  (draw-on (-> Image Image)))
-
-;(define zombie/c
-; (->i ([msg (one-of/c 'posn 'draw-on/color 'touching? 'move-toward)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'posn) (-> posn/c)]
-;    [(equal? msg 'draw-on/color) (string? image? . -> . image?)]
-;    [(equal? msg 'touching?) (posn/c . -> . boolean?)]
-;    [(equal? msg 'move-toward) (posn/c . -> . zombie/c)]
-;    [else "error"]))))
-
-(make-fake-object-type* Zombie
-  (posn (-> Posn))
-  (draw-on/color (-> String Image Image))
-  (touching? (-> Posn Boolean))
-  (move-toward (-> Posn Zombie)))
-
-;(define horde/c
-; (->i ([msg (one-of/c 'dead 'undead 'draw-on 'touching? 'move-toward 'eat-brains)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'dead) (-> zombies/c)]
-;    [(equal? msg 'undead) (-> zombies/c)]
-;    [(equal? msg 'draw-on) (image? . -> . image?)]
-;    [(equal? msg 'touching?) (posn/c . -> . boolean?)]
-;    [(equal? msg 'move-toward) (posn/c . -> . horde/c)]
-;    [(equal? msg 'eat-brains) (-> horde/c)]
-;    [else "error"]))))
-
-(make-fake-object-type* Horde
-  (dead (-> Zombies))
-  (undead (-> Zombies))
-  (draw-on (-> Image Image))
-  (touching? (-> Posn Boolean))
-  (move-toward (-> Posn Horde))
-  (eat-brains (-> Horde)))
-
-;(define zombies/c
-; (->i ([msg (one-of/c 'move-toward 'draw-on/color 'touching? 'kill-all)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'move-toward) (posn/c . -> . zombies/c)]
-;    [(equal? msg 'draw-on/color) (string? image? . -> . image?)]
-;    [(equal? msg 'touching?) (posn/c . -> . boolean?)]
-;    [(equal? msg 'kill-all) (zombies/c . -> . horde/c)]
-;    [else "error"]))))
-
-(make-fake-object-type* Zombies
-  (move-toward (-> Posn Zombies))
-  (draw-on/color (-> String Image Image))
-  (touching? (-> Posn Boolean))
-  (kill-all (-> Zombies Horde)))
-
-;(define world/c
-; (->i ([msg (one-of/c 'on-mouse 'on-tick 'to-draw 'stop-when)])
-;  (res (msg)
-;   (cond
-;    [(equal? msg 'on-mouse) (number? number? string? . -> . world/c)]
-;    [(equal? msg 'on-tick) (-> world/c)]
-;    [(equal? msg 'to-draw) (-> image?)]
-;    [(equal? msg 'stop-when) (-> boolean?)]
-;    [else "error"]))))
-
-(make-fake-object-type* World
-  (on-mouse (-> Real Real String World))
-  (on-tick (-> World))
-  (to-draw (-> Image))
-  (stop-when (-> Boolean)))
 
 (define/contract (new-world player mouse zombies)
   (configurable-ctc

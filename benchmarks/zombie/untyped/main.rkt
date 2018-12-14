@@ -7,8 +7,9 @@
   w0
   world-on-mouse
   world-on-tick
-  world/c
 ))
+
+(require (only-in "data.rkt" world/c))
 
 ;; =============================================================================
 
