@@ -9,8 +9,8 @@
 
 (define/contract (replay w0 hist)
   (configurable-ctc
-   [types (-> world? (listof any/c) void?)]
-   [max (-> world? (listof any/c) void?)])
+   [types (-> world? (listof any/c) any)]
+   [max (-> world? (listof any/c) any)])
   (reset!)
   (let loop ((w w0) (h hist))
     (if (empty? h)
@@ -33,8 +33,8 @@
 
 (define/contract (main hist)
   (configurable-ctc
-   [types (-> any/c void?)]
-   [max (-> any/c void?)])
+   [types (-> any/c any)]
+   [max (-> any/c any)])
   (define w0 (WORLD))
   (cond [(list? hist)
          (for ((_i (in-range LOOPS)))
