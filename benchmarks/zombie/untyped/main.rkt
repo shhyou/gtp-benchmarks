@@ -1,14 +1,21 @@
 #lang racket/base
 
+(require racket/contract
+         "../../../ctcs/precision-config.rkt")
+
 (require (only-in "zombie.rkt"
   w0
   world-on-mouse
   world-on-tick
+  world/c
 ))
 
 ;; =============================================================================
 
-(define (replay w0 hist)
+(define/contract (replay w0 hist)
+  (configurable-ctc
+   [types (-> world/c (listof any/c) any)]
+   [max (-> world/c (listof any/c) any)])
  (let loop ((w  w0)
             (h  hist))
   (cond
@@ -34,7 +41,10 @@
 (define DATA
   (with-input-from-file "../base/zombie-hist.rktd" read))
 
-(define (main hist)
+(define/contract (main hist)
+  (configurable-ctc
+   [types (-> any/c any)]
+   [max (-> any/c any)])
   (cond
    [(list? hist)
     (for ((i (in-range 100)))

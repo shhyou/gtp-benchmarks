@@ -4,9 +4,12 @@
  w0
  world-on-mouse
  world-on-tick
+ world/c
 )
 
 (require
+  racket/contract
+  "../../../ctcs/precision-config.rkt"
   (for-syntax racket/sequence racket/base syntax/parse racket/syntax))
 
 (require (only-in "image.rkt"
@@ -39,14 +42,23 @@
   ;;bg; the untyped version ignores all types
   (syntax-parser
    [(_ ty [f* t*] ...)
+    #:with ty-method-id/c (format-id #'ty "~a-method-id/c" (string-downcase (symbol->string (syntax-e #'ty))))
+    #:with ty/c (format-id #'ty "~a/c" (string-downcase (symbol->string (syntax-e #'ty))))
     #:with (id* ...) (for/list ([f (in-list (syntax->list #'(f* ...)))])
                        (format-id #'ty "~a-~a" (string-downcase (symbol->string (syntax-e #'ty))) f))
     #:with (f-sym* ...) (for/list ([f (in-list (syntax->list #'(f* ...)))]) (syntax-e f))
     #'(begin
         ;(define-type ty (-> Symbol (U (Pairof 'f-sym* t*) ...)))
+        (define ty-method-id/c
+          (flat-named-contract 'ty-method-id/c
+                               (or/c 'f-sym* ...)))
+        (define ty/c (-> ty-method-id/c (cons/c ty-method-id/c any/c)))
         (begin
           ;(: id* (-> ty t*))
-          (define (id* v)
+          (define/contract (id* v)
+            (configurable-ctc
+             [types (-> ty/c any)]
+             [max (-> ty/c any)])
             (let ([r (v 'f-sym*)])
               (if (eq? 'f-sym* (car r))
                 (cdr r)
@@ -155,7 +167,10 @@
   (to-draw (-> Image))
   (stop-when (-> Boolean)))
 
-(define (new-world player mouse zombies)
+(define/contract (new-world player mouse zombies)
+  (configurable-ctc
+   [types (-> player/c posn/c horde/c world/c)]
+   [max (-> player/c posn/c horde/c world/c)])
  (lambda (msg)
   (cond
    [(equal? msg 'on-mouse)
@@ -180,7 +195,10 @@
     ((horde-touching? zombies) ((player-posn player)))))]
    [else (error 'world "unknown message")])))
 
-(define (new-player p)
+(define/contract (new-player p)
+  (configurable-ctc
+   [types (-> posn/c player/c)]
+   [max (-> posn/c player/c)])
   (lambda (msg)
    (cond
     [(equal? msg 'posn) (cons 'posn (lambda () p))]
@@ -194,7 +212,10 @@
      ((posn-draw-on/image p) PLAYER-IMG scn)))]
     [else (error 'player "unknown message")])))
 
-(define (new-horde undead dead)
+(define/contract (new-horde undead dead)
+  (configurable-ctc
+   [types (-> zombies/c zombies/c horde/c)]
+   [max (-> zombies/c zombies/c horde/c)])
  (lambda (msg)
   (cond
    [(equal? msg 'dead) (cons 'dead (lambda () dead))]
@@ -216,7 +237,10 @@
      (lambda () ((zombies-kill-all undead) dead)))]
    [else (error 'horde "unknown message")])))
 
-(define (new-cons-zombies z r)
+(define/contract (new-cons-zombies z r)
+  (configurable-ctc
+   [types (-> zombie/c zombies/c zombies/c)]
+   [max (-> zombie/c zombies/c zombies/c)])
  (lambda (msg)
   (cond
    [(equal? msg 'move-toward)
@@ -244,7 +268,10 @@
           ((horde-dead res))))])))]
    [else (error 'zombies "unknown message")])))
 
-(define (new-mt-zombies)
+(define/contract (new-mt-zombies)
+  (configurable-ctc
+   [types (-> zombies/c)]
+   [max (-> zombies/c)])
  (lambda (msg)
   (cond
    [(equal? msg 'move-toward) (cons 'move-toward (lambda (p) (new-mt-zombies)))]
@@ -256,7 +283,10 @@
     (new-horde (new-mt-zombies) dead)))]
    [else (error 'zombies "unknown message")])))
 
-(define (new-zombie p)
+(define/contract (new-zombie p)
+  (configurable-ctc
+   [types (-> posn/c zombie/c)]
+   [max (-> posn/c zombie/c)])
  (lambda (msg)
   (cond
    [(equal? msg 'posn) (cons 'posn (lambda () p))]
@@ -276,7 +306,10 @@
     (new-zombie ((posn-move-toward/speed p) q ZOMBIE-SPEED))))]
    [else (error 'zombie "unknown message")])))
 
-(define (new-posn x y)
+(define/contract (new-posn x y)
+  (configurable-ctc
+   [types (-> real? real? posn/c)]
+   [max (-> real? real? posn/c)])
      (lambda (msg)
       (let ([this (new-posn x y)]) ; FIXME
        (cond
@@ -313,7 +346,10 @@
                    (sqr (- ((posn-x p)) x))))))]
         [else (error 'posn "unknown message")]))))
 
-(define w0
+(define/contract w0
+  (configurable-ctc
+   [types world/c]
+   [max world/c])
  (new-world
   (new-player (new-posn 0 0))
   (new-posn 0 0)
