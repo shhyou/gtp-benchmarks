@@ -138,8 +138,8 @@
           [types (-> zombies/c)]
           [max (-> zombies/c)])
   (draw-on (-> Image Image)
-           [types (-> image?)]
-           [max (-> image?)])
+           [types (-> image? image?)]
+           [max (-> image? image?)])
   (touching? (-> Posn Boolean)
              [types (-> posn/c boolean?)]
              [max (-> posn/c boolean?)])
