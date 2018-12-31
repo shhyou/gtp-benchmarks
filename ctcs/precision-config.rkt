@@ -31,14 +31,21 @@
                                            current-precision-config)]
             [current-ctc-stx (if (number? current-level-index)
                                  (list-ref ctcs current-level-index)
-                                 #'any/c)])
+                                 #'any/c)]
+            [ctcs-remained (if (number? current-level-index)
+                               (append (take ctcs current-level-index)
+                                       (drop ctcs (+ 1 current-level-index)))
+                               ctcs)])
        (begin
          (unless (andmap (curryr member precision-configs) levels)
            (error 'configurable-ctc
                   "Unknown precision config provided at ~a" stx))
-         (with-syntax ([ctc-for-current-level current-ctc-stx])
+         (with-syntax ([ctc-for-current-level current-ctc-stx]
+                       [(ctc-remained ...) ctcs-remained])
            (syntax/loc current-ctc-stx
-             ctc-for-current-level))))]))
+             (begin
+               (when #f ctc-remained ... (void))
+               ctc-for-current-level)))))]))
 
 
 
